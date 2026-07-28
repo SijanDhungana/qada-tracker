@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #f6f7f4;
+  --color-surface: #ffffff;
+  --color-line: #e4e6e0;
+  --color-ink: #1d2620;
+  --color-muted: #6b7770;
+  --color-accent: #2f7a5b;
+  --color-accent-soft: #e6f1eb;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Keep taps snappy on phones. */
+  button,
+  [role="button"],
+  label {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --color-canvas: #12160f;
+    --color-surface: #1a201a;
+    --color-line: #2b332b;
+    --color-ink: #e8ece6;
+    --color-muted: #97a399;
+    --color-accent: #5fbf92;
+    --color-accent-soft: #22302a;
+  }
+}
