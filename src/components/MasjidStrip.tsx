@@ -131,10 +131,14 @@ export function MasjidStrip({
         </Link>
       </div>
 
+      {/*
+        Naming both numbers avoids the tautology "3 of 3 logged at the masjid",
+        which reads as though 3 were all there were to pray.
+      */}
       <p className="text-meta text-ink-3">
         {loggedCount === 0
           ? "Log each prayer as you pray it."
-          : `${masjidCount} of ${loggedCount} logged at the masjid so far today.`}
+          : `${loggedCount} of ${BASE_PRAYERS.length} logged today · ${masjidCount} at the masjid`}
       </p>
 
       <ul className="flex flex-col gap-2">

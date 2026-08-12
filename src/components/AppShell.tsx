@@ -106,7 +106,12 @@ export function AppShell({
 
         <div className="min-w-0 flex-1">
           <MobileHeader username={username} />
-          <div className="pb-[calc(env(safe-area-inset-bottom)+5rem)] lg:pb-10">
+          {/*
+            The tab bar floats over the page, so the last card needs room to
+            clear it rather than stopping flush against its edge. 7rem leaves a
+            comfortable margin below the bar's ~5rem footprint.
+          */}
+          <div className="pb-[calc(env(safe-area-inset-bottom)+7rem)] lg:pb-10">
             {children}
           </div>
         </div>
