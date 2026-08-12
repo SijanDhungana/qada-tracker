@@ -116,6 +116,51 @@ export async function GET() {
     }
   }
 
+  // 5. Is the schema current? Existing tables alone aren't enough — a database
+  //    left on an older migration has the right tables and the wrong columns,
+  //    which fails at request time rather than here.
+  if (reachable) {
+    try {
+      const rows = await db.execute<{ table_name: string; column_name: string }>(sql`
+        select table_name, column_name from information_schema.columns
+        where table_schema = 'public'
+          and table_name in ('users', 'prayer_days', 'masjid_prayers')
+      `);
+
+      const present = new Set(
+        Array.from(rows).map((row) => `${row.table_name}.${row.column_name}`),
+      );
+
+      const required = [
+        "prayer_days.fajr_at",
+        "prayer_days.zuhr_at",
+        "prayer_days.asr_at",
+        "prayer_days.maghrib_at",
+        "prayer_days.isha_at",
+        "prayer_days.witr_at",
+        "users.daily_goal",
+        "users.theme",
+        "masjid_prayers.id",
+      ];
+      const missing = required.filter((column) => !present.has(column));
+
+      checks.push({
+        name: "Schema up to date",
+        ok: missing.length === 0,
+        detail:
+          missing.length === 0
+            ? "All columns this version needs are present."
+            : `${missing.length} missing (e.g. ${missing[0]}). Run the newest migration — \`npm run db:migrate\`, or paste drizzle/0001_round_dorian_gray.sql into Neon's SQL Editor.`,
+      });
+    } catch (error) {
+      checks.push({
+        name: "Schema up to date",
+        ok: false,
+        detail: describe(error),
+      });
+    }
+  }
+
   const ok = checks.every((check) => check.ok);
   const firstProblem = checks.find((check) => !check.ok);
 
