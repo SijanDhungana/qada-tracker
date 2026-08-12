@@ -4,6 +4,8 @@ export const BASE_PRAYERS = ["fajr", "zuhr", "asr", "maghrib", "isha"] as const;
 export const ALL_PRAYERS = [...BASE_PRAYERS, "witr"] as const;
 
 export type PrayerKey = (typeof ALL_PRAYERS)[number];
+/** The five daily prayers — Witr is not prayed in congregation, so it's excluded. */
+export type DailyPrayerKey = (typeof BASE_PRAYERS)[number];
 
 export const PRAYER_LABELS: Record<PrayerKey, string> = {
   fajr: "Fajr",
@@ -14,9 +16,25 @@ export const PRAYER_LABELS: Record<PrayerKey, string> = {
   witr: "Witr",
 };
 
+/** Column name holding the moment a slot was logged. */
+export const LOGGED_AT_COLUMN = {
+  fajr: "fajrAt",
+  zuhr: "zuhrAt",
+  asr: "asrAt",
+  maghrib: "maghribAt",
+  isha: "ishaAt",
+  witr: "witrAt",
+} as const satisfies Record<PrayerKey, keyof PrayerDay>;
+
 export function isPrayerKey(value: unknown): value is PrayerKey {
   return (
     typeof value === "string" && (ALL_PRAYERS as readonly string[]).includes(value)
+  );
+}
+
+export function isDailyPrayerKey(value: unknown): value is DailyPrayerKey {
+  return (
+    typeof value === "string" && (BASE_PRAYERS as readonly string[]).includes(value)
   );
 }
 
@@ -25,55 +43,17 @@ export function prayersFor(trackWitr: boolean): readonly PrayerKey[] {
   return trackWitr ? ALL_PRAYERS : BASE_PRAYERS;
 }
 
-export function isDayComplete(
-  day: Pick<PrayerDay, PrayerKey>,
-  trackWitr: boolean,
-): boolean {
+type SlotBooleans = Pick<PrayerDay, PrayerKey>;
+
+export function isDayComplete(day: SlotBooleans, trackWitr: boolean): boolean {
   return prayersFor(trackWitr).every((prayer) => day[prayer]);
 }
 
-export function countCompleted(
-  day: Pick<PrayerDay, PrayerKey>,
-  trackWitr: boolean,
-): number {
+export function countCompleted(day: SlotBooleans, trackWitr: boolean): number {
   return prayersFor(trackWitr).filter((prayer) => day[prayer]).length;
 }
 
-export type Totals = {
-  totalPrayers: number;
-  completedPrayers: number;
-  totalDays: number;
-  completedDays: number;
-  remainingDays: number;
-  percent: number;
-};
-
-export function computeTotals(
-  days: Pick<PrayerDay, PrayerKey>[],
-  trackWitr: boolean,
-): Totals {
-  const perDay = prayersFor(trackWitr).length;
-  const totalPrayers = days.length * perDay;
-  let completedPrayers = 0;
-  let completedDays = 0;
-
-  for (const day of days) {
-    const done = countCompleted(day, trackWitr);
-    completedPrayers += done;
-    if (done === perDay) completedDays += 1;
-  }
-
-  return {
-    totalPrayers,
-    completedPrayers,
-    totalDays: days.length,
-    completedDays,
-    remainingDays: days.length - completedDays,
-    percent: totalPrayers === 0 ? 0 : Math.round((completedPrayers / totalPrayers) * 100),
-  };
-}
-
-/** "12 Jan 2025" for dated days, "Day 7" for quick-amount days. */
+/** "17 May 2025" for dated days, "Day 7" for quick-amount days. */
 export function dayLabel(day: Pick<PrayerDay, "dayIndex" | "dayDate">): string {
   if (!day.dayDate) return `Day ${day.dayIndex}`;
 
@@ -84,6 +64,17 @@ export function dayLabel(day: Pick<PrayerDay, "dayIndex" | "dayDate">): string {
   return date.toLocaleDateString("en-GB", {
     day: "numeric",
     month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** "May 2025" — used to group ledger rows. */
+export function monthLabel(dayDate: string | null): string | null {
+  if (!dayDate) return null;
+  const [year, month] = dayDate.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString("en-GB", {
+    month: "long",
     year: "numeric",
     timeZone: "UTC",
   });

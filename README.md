@@ -18,24 +18,72 @@ every piece stays on a free tier.
 | Piece      | Choice                                                     |
 | ---------- | ---------------------------------------------------------- |
 | Framework  | Next.js (App Router) + TypeScript                          |
-| Styling    | Tailwind CSS                                               |
+| Styling    | Tailwind CSS v4, driven entirely by CSS custom properties  |
+| Fonts      | Bricolage Grotesque, Instrument Sans, IBM Plex Mono        |
 | Database   | Postgres via the Vercel Marketplace (Neon Free)            |
 | DB access  | Drizzle ORM                                                |
 | Auth       | Auth.js (NextAuth v5), Credentials provider, bcryptjs      |
 | Hosting    | Vercel (Hobby)                                             |
 
+Fonts are downloaded at build time by `next/font` and served from the app's own
+origin, so there is no font CDN in the critical path.
+
+## Design tokens
+
+`src/app/globals.css` is the single source of truth for colour, type, spacing,
+radius and motion. Every value is a CSS custom property, mirrored into Tailwind's
+`@theme inline` so utilities like `bg-surface` and `text-ink-2` resolve to the
+same variables and theme switching stays live. Dark is the base theme; an
+explicit Dark/Light choice is stamped on `<html>` as `data-theme` and beats the
+system preference.
+
+Saturated green is reserved for progress, so a filled ledger cell actually reads
+as filled. The warm `--today` accent marks *where to act next* and never doubles
+as a success colour. Red appears only in destructive confirmations.
+
 ## Routes
 
-| Route         | What it does                                            |
-| ------------- | ------------------------------------------------------- |
-| `/signup`     | Create an account (username + password)                 |
-| `/login`      | Sign in, with a "remember me" option                    |
-| `/onboarding` | First-time setup — how many days to catch up on         |
-| `/`           | The tracker (protected)                                 |
-| `/settings`   | Witr toggle, add more days, log out (protected)         |
+| Route         | What it does                                                     |
+| ------------- | ---------------------------------------------------------------- |
+| `/signup`     | Create an account (username + password)                          |
+| `/login`      | Sign in, with a "remember me" option                             |
+| `/onboarding` | The empty state — how much you're making up                      |
+| `/`           | Today: log make-up prayers, today's goal, masjid strip, grid     |
+| `/ledger`     | The full day record — grid and list views, per-day editing       |
+| `/masjid`     | Congregation history and the patterns in it                      |
+| `/settings`   | Goal, Witr, add/remove days, theme, export, account              |
 
-Logged-out visitors to `/` and `/settings` are redirected to `/login` by
-`src/middleware.ts`.
+Three destinations appear in the nav (Today, Ledger, Settings); `/masjid` is a
+detail screen reached from the Today screen's masjid section, the way the grid
+links through to the full ledger. Logged-out visitors are redirected to
+`/login` by `src/middleware.ts`.
+
+## How logging works
+
+The primary action is **FIFO logging**, not picking a date. Tapping `+` on Asr
+marks the *oldest incomplete Asr slot* in the ledger done and stamps it with the
+real time you pressed it. Nobody thinks "I am making up the Asr of 17 May 2025",
+so the app doesn't ask.
+
+Each slot carries two timestamps: the ledger date it belongs to (`day_date`) and
+when it was logged (`fajr_at`, `zuhr_at`, …). Pace and history read the second;
+the ledger view reads the first. Manual per-day editing stays fully available in
+the Ledger — FIFO is the fast path, not the only one.
+
+The target is recomputed from the table on every write rather than cached, so
+clearing a day in the middle of the ledger can't leave a stale pointer.
+
+## Tracking prayers at the masjid
+
+Separate from the qada ledger, the Today screen records where each of today's
+five prayers was prayed: **at the masjid**, **on my own**, or **missed**. Anything
+other than the masjid offers a note — chosen from suggestions or typed — and
+`/masjid` turns those notes into something usable: which prayer is hardest to
+make, and what most often gets in the way.
+
+Three states rather than a checkbox is deliberate. "Prayed on my own" is the
+common middle case, and folding it into "missed" would make both the record and
+the tone wrong.
 
 ## How the pieces fit together
 

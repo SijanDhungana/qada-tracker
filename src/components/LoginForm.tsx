@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import { login, type AuthState } from "@/lib/actions/auth";
-import { inputClass, labelClass, primaryButtonClass } from "./AuthShell";
+import { errorClass, inputClass, labelClass, primaryButtonClass } from "./AuthShell";
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -53,26 +53,26 @@ export function LoginForm() {
         />
       </div>
 
-      <label className="flex items-center gap-3 py-1 text-sm">
+      <label className="flex min-h-11 items-center gap-3 text-body">
         <input
           type="checkbox"
           name="remember"
           defaultChecked
-          className="h-5 w-5 rounded-md accent-[var(--color-accent)]"
+          className="size-5 rounded-sm accent-[var(--brand)]"
         />
-        <span>Remember me for 30 days</span>
+        <span className="text-ink-2">Remember me for 30 days</span>
       </label>
 
       {state?.error ? (
         <div
           role="alert"
-          className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200"
+          className={errorClass}
         >
           <p>{state.error}</p>
           {state.suggestSignup ? (
             <Link
               href="/signup"
-              className="mt-2 inline-block font-semibold underline underline-offset-2"
+              className="mt-2 inline-block font-semibold text-brand underline underline-offset-2"
             >
               Create an account →
             </Link>

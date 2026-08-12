@@ -3,7 +3,7 @@
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import { signup, type AuthState } from "@/lib/actions/auth";
-import { inputClass, labelClass, primaryButtonClass } from "./AuthShell";
+import { errorClass, inputClass, labelClass, primaryButtonClass } from "./AuthShell";
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -36,7 +36,7 @@ export function SignupForm() {
           required
           className={inputClass}
         />
-        <p className="mt-1.5 text-xs text-muted">
+        <p className="mt-1.5 text-meta text-ink-3">
           3–32 characters. Letters, numbers, dots, dashes and underscores.
         </p>
       </div>
@@ -54,7 +54,7 @@ export function SignupForm() {
           minLength={8}
           className={inputClass}
         />
-        <p className="mt-1.5 text-xs text-muted">At least 8 characters.</p>
+        <p className="mt-1.5 text-meta text-ink-3">At least 8 characters.</p>
       </div>
 
       <div>
@@ -75,11 +75,17 @@ export function SignupForm() {
       {state?.error ? (
         <p
           role="alert"
-          className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200"
+          className={errorClass}
         >
           {state.error}
         </p>
       ) : null}
+
+      <p className="rounded-md border border-today/40 bg-today-wash px-3.5 py-3 text-meta text-ink-2">
+        Accounts have no email address. That keeps signup simple, but it also means
+        a forgotten password can&apos;t be reset — you can export your data any time
+        from Settings to keep a copy.
+      </p>
 
       <SubmitButton />
     </form>

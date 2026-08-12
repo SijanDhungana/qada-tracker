@@ -1,0 +1,168 @@
+import type { DailyPrayerKey } from "./prayers";
+
+/**
+ * Where a prayer was prayed. Deliberately three states rather than a
+ * yes/no — "prayed on my own" is a real and common answer, and collapsing it
+ * into "missed" would make the record useless and the tone punitive.
+ */
+export const MASJID_STATUSES = ["masjid", "alone", "missed"] as const;
+export type MasjidStatus = (typeof MASJID_STATUSES)[number];
+
+export function isMasjidStatus(value: unknown): value is MasjidStatus {
+  return (
+    typeof value === "string" && (MASJID_STATUSES as readonly string[]).includes(value)
+  );
+}
+
+export const STATUS_LABELS: Record<MasjidStatus, string> = {
+  masjid: "At the masjid",
+  alone: "On my own",
+  missed: "Missed",
+};
+
+export const STATUS_SHORT: Record<MasjidStatus, string> = {
+  masjid: "Masjid",
+  alone: "On my own",
+  missed: "Missed",
+};
+
+/**
+ * Suggested notes. Plain descriptions of circumstances, never judgements —
+ * the point is to notice patterns, not to keep a record of failures.
+ */
+export const REASON_SUGGESTIONS = [
+  "Work",
+  "Travelling",
+  "Studying",
+  "Unwell",
+  "Asleep",
+  "Family",
+  "Weather",
+  "Too far",
+] as const;
+
+export const MAX_REASON_LENGTH = 120;
+
+export type MasjidEntry = {
+  prayerDate: string;
+  prayer: DailyPrayerKey;
+  status: MasjidStatus;
+  reason: string | null;
+  loggedAt: string;
+};
+
+/** A local YYYY-MM-DD string — never a UTC one, or the day rolls at the wrong hour. */
+export function localDateKey(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function startOfLocalDay(date = new Date()): Date {
+  const copy = new Date(date);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
+}
+
+export function shiftDateKey(key: string, days: number): string {
+  const [year, month, day] = key.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() + days);
+  return localDateKey(date);
+}
+
+export function formatDateKey(key: string): string {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-GB", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export type MasjidSummary = {
+  /** Prayers recorded as prayed at the masjid. */
+  masjid: number;
+  alone: number;
+  missed: number;
+  logged: number;
+};
+
+export function summarise(entries: MasjidEntry[]): MasjidSummary {
+  const summary: MasjidSummary = { masjid: 0, alone: 0, missed: 0, logged: 0 };
+  for (const entry of entries) {
+    summary[entry.status] += 1;
+    summary.logged += 1;
+  }
+  return summary;
+}
+
+/**
+ * The most common notes attached to prayers that weren't at the masjid.
+ * This is the actual payoff of asking for a reason — it turns a pile of
+ * individual entries into something the user can act on.
+ */
+export function topReasons(
+  entries: MasjidEntry[],
+  limit = 4,
+): { reason: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.status === "masjid") continue;
+    const reason = entry.reason?.trim();
+    if (!reason) continue;
+    const key = reason.toLowerCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .map(([key, count]) => ({
+      // Restore the casing the user actually typed for the first occurrence.
+      reason:
+        entries.find((e) => e.reason?.trim().toLowerCase() === key)?.reason?.trim() ??
+        key,
+      count,
+    }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason))
+    .slice(0, limit);
+}
+
+/** Which of the five prayers most often happens away from the masjid. */
+export function hardestPrayer(
+  entries: MasjidEntry[],
+): { prayer: DailyPrayerKey; away: number; total: number } | null {
+  const tally = new Map<DailyPrayerKey, { away: number; total: number }>();
+
+  for (const entry of entries) {
+    const current = tally.get(entry.prayer) ?? { away: 0, total: 0 };
+    current.total += 1;
+    if (entry.status !== "masjid") current.away += 1;
+    tally.set(entry.prayer, current);
+  }
+
+  let worst: { prayer: DailyPrayerKey; away: number; total: number } | null = null;
+  for (const [prayer, counts] of tally) {
+    if (counts.away === 0) continue;
+    if (!worst || counts.away > worst.away) {
+      worst = { prayer, away: counts.away, total: counts.total };
+    }
+  }
+  return worst;
+}
+
+/** Monotonic, never-resetting counts — no streak to break. */
+export function daysWithAnyMasjid(entries: MasjidEntry[]): number {
+  const days = new Set<string>();
+  for (const entry of entries) {
+    if (entry.status === "masjid") days.add(entry.prayerDate);
+  }
+  return days.size;
+}

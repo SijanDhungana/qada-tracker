@@ -1,21 +1,12 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { useFormStatus } from "react-dom";
-import { addMissedDays, type ActionResult } from "@/lib/actions/days";
-import { inputClass, labelClass, primaryButtonClass } from "./AuthShell";
+import { addMissedDays } from "@/lib/actions/settings";
+import { SegmentedControl } from "./ui/SegmentedControl";
+import { useToast } from "./ui/Toast";
 
 type Mode = "range" | "amount";
-
-function SubmitButton({ label }: { label: string }) {
-  const { pending } = useFormStatus();
-  return (
-    <button type="submit" className={primaryButtonClass} disabled={pending}>
-      {pending ? "Adding days…" : label}
-    </button>
-  );
-}
 
 function countFromRange(start: string, end: string): number | null {
   if (!start || !end) return null;
@@ -25,143 +16,134 @@ function countFromRange(start: string, end: string): number | null {
   return Math.round((endMs - startMs) / 86_400_000) + 1;
 }
 
+const inputClass =
+  "min-h-12 w-full rounded-md border border-line bg-surface-2 px-3 text-body text-ink " +
+  "outline-none placeholder:text-ink-3 focus:border-brand";
+
+/**
+ * Both modes produce the same thing — a number of days — so the difference is
+ * spelled out rather than left to the tab label, and each shows a live preview
+ * of exactly what it will add.
+ */
 export function DayInputForm({
-  submitLabel = "Add these days",
-  redirectTo,
-  onAdded,
+  submitLabel = "Add to my list",
+  perDay,
+  onDone,
 }: {
   submitLabel?: string;
-  redirectTo?: string;
-  onAdded?: () => void;
+  perDay: number;
+  onDone?: () => void;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [mode, setMode] = useState<Mode>("range");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [amount, setAmount] = useState("");
   const [unit, setUnit] = useState("days");
-  const [state, formAction] = useActionState<ActionResult | undefined, FormData>(
-    addMissedDays,
-    undefined,
-  );
-
-  useEffect(() => {
-    if (state?.ok) {
-      if (redirectTo) {
-        router.push(redirectTo);
-      } else {
-        setStart("");
-        setEnd("");
-        setAmount("");
-        router.refresh();
-        onAdded?.();
-      }
-    }
-    // Only react to a fresh result object.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state]);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
 
   const rangeCount = countFromRange(start, end);
   const amountCount = (() => {
-    const n = Number(amount);
-    if (!Number.isInteger(n) || n < 1) return null;
-    return n * (unit === "weeks" ? 7 : unit === "months" ? 30 : 1);
+    const value = Number(amount);
+    if (!Number.isInteger(value) || value < 1) return null;
+    return value * (unit === "weeks" ? 7 : unit === "months" ? 30 : 1);
   })();
+  const preview = mode === "range" ? rangeCount : amountCount;
+
+  function submit() {
+    setError(null);
+    startTransition(async () => {
+      const result = await addMissedDays(
+        mode === "range"
+          ? { mode, startDate: start, endDate: end }
+          : { mode, amount: Number(amount), unit },
+      ).catch(() => ({ ok: false as const, error: "Couldn't save those days." }));
+
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+
+      setStart("");
+      setEnd("");
+      setAmount("");
+      toast({
+        message:
+          result.skipped > 0
+            ? `${result.added.toLocaleString()} days added · ${result.skipped.toLocaleString()} already tracked`
+            : `${result.added.toLocaleString()} days added.`,
+      });
+      router.refresh();
+      onDone?.();
+    });
+  }
 
   return (
-    <form action={formAction} className="space-y-5">
-      <input type="hidden" name="mode" value={mode} />
-
-      <div
-        role="tablist"
-        aria-label="How to enter missed days"
-        className="grid grid-cols-2 gap-1 rounded-xl bg-accent-soft p-1"
-      >
-        {(
-          [
-            ["range", "Pick a date range"],
-            ["amount", "Quick amount"],
-          ] as const
-        ).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={mode === value}
-            onClick={() => setMode(value)}
-            className={`rounded-lg px-3 py-2.5 text-sm font-medium transition ${
-              mode === value
-                ? "bg-surface text-ink shadow-sm"
-                : "text-muted"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+    <div className="flex flex-col gap-4">
+      <SegmentedControl
+        label="How to enter missed days"
+        value={mode}
+        onChange={setMode}
+        options={[
+          { value: "range", label: "By date range" },
+          { value: "amount", label: "By amount" },
+        ]}
+      />
 
       {mode === "range" ? (
-        <div className="space-y-4">
+        <div className="flex flex-col gap-4">
           <div>
-            <label className={labelClass} htmlFor="startDate">
+            <label htmlFor="startDate" className="mb-1.5 block text-meta text-ink-2">
               First missed day
             </label>
             <input
               id="startDate"
-              name="startDate"
               type="date"
-              required
               value={start}
               onChange={(event) => setStart(event.target.value)}
               className={inputClass}
             />
           </div>
           <div>
-            <label className={labelClass} htmlFor="endDate">
+            <label htmlFor="endDate" className="mb-1.5 block text-meta text-ink-2">
               Last missed day
             </label>
             <input
               id="endDate"
-              name="endDate"
               type="date"
-              required
               value={end}
               onChange={(event) => setEnd(event.target.value)}
               className={inputClass}
             />
           </div>
-          <p className="text-sm text-muted">
-            {rangeCount === null
-              ? "Both dates are included in the count."
-              : `That's ${rangeCount.toLocaleString()} ${rangeCount === 1 ? "day" : "days"}, each labelled with its date.`}
-          </p>
+          <p className="text-meta text-ink-3">Both dates are included in the count.</p>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="flex flex-col gap-4">
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className={labelClass} htmlFor="amount">
-                How many
+              <label htmlFor="amount" className="mb-1.5 block text-meta text-ink-2">
+                How many days?
               </label>
               <input
                 id="amount"
-                name="amount"
                 type="number"
                 inputMode="numeric"
                 min={1}
-                required
+                placeholder="0"
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
                 className={inputClass}
               />
             </div>
-            <div className="w-36">
-              <label className={labelClass} htmlFor="unit">
+            <div className="w-32">
+              <label htmlFor="unit" className="mb-1.5 block text-meta text-ink-2">
                 Unit
               </label>
               <select
                 id="unit"
-                name="unit"
                 value={unit}
                 onChange={(event) => setUnit(event.target.value)}
                 className={inputClass}
@@ -172,24 +154,41 @@ export function DayInputForm({
               </select>
             </div>
           </div>
-          <p className="text-sm text-muted">
-            {amountCount === null
-              ? "Weeks count as 7 days and months as 30 days — these are approximate."
-              : `That's ${amountCount.toLocaleString()} ${amountCount === 1 ? "day" : "days"}, labelled “Day 1”, “Day 2”, and so on. Weeks count as 7 days and months as 30 — approximate.`}
+          <p className="text-meta text-ink-3">
+            These are added as days ending yesterday. Weeks count as 7 days and
+            months as 30 — approximate.
           </p>
         </div>
       )}
 
-      {state && !state.ok ? (
-        <p
-          role="alert"
-          className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200"
-        >
-          {state.error}
+      <p className="rounded-md border border-line bg-surface-2 px-4 py-3 text-body text-ink-2">
+        {preview === null ? (
+          "Adds nothing yet."
+        ) : (
+          <>
+            Adds <span className="num text-ink">{preview.toLocaleString()}</span> days ·{" "}
+            <span className="num text-ink">
+              {(preview * perDay).toLocaleString()}
+            </span>{" "}
+            prayers
+          </>
+        )}
+      </p>
+
+      {error ? (
+        <p role="alert" className="text-meta text-danger">
+          {error}
         </p>
       ) : null}
 
-      <SubmitButton label={submitLabel} />
-    </form>
+      <button
+        type="button"
+        onClick={submit}
+        disabled={pending || preview === null}
+        className="min-h-12 w-full rounded-md bg-brand text-body font-semibold text-done-ink disabled:opacity-50"
+      >
+        {pending ? "Adding…" : submitLabel}
+      </button>
+    </div>
   );
 }
