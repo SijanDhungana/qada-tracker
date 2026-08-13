@@ -338,8 +338,8 @@ export function TodayScreen({ data }: { data: TodayData }) {
 
         <p className="text-meta text-ink-3">
           <span className="num">{data.totalDays.toLocaleString()}</span> days ·{" "}
-          <span className="num">{outstandingTotal.toLocaleString()}</span> prayers
-          outstanding
+          <span className="num">{outstandingTotal.toLocaleString()}</span>{" "}
+          prayers outstanding
           {data.gridTruncated ? " · showing the earliest stretch" : ""}
         </p>
       </section>

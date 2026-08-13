@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, count, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { prayerDays, users } from "@/db/schema";
 import { requireUser } from "@/lib/session";
@@ -238,6 +238,197 @@ export async function removeDays(
     return { ok: true, removed: removed.length };
   } catch {
     return { ok: false, error: "Couldn't remove those days. Please try again." };
+  }
+}
+
+export type RemoveDirection = "recent" | "oldest";
+
+function orderForDirection(direction: RemoveDirection) {
+  // "Recent" targets the highest day_index — the days added last, which are
+  // the ones least likely to already have anything logged against them.
+  return direction === "recent" ? desc(prayerDays.dayIndex) : asc(prayerDays.dayIndex);
+}
+
+/**
+ * What removing N days by count would destroy. Works uniformly for dated and
+ * quick-amount days — count-based removal is the only way to remove a
+ * quick-amount day at all, since those have no date to filter by.
+ */
+export async function previewRemovalByCount(
+  amount: number,
+  direction: RemoveDirection,
+): Promise<{ ok: true; days: number; logged: number } | { ok: false; error: string }> {
+  const user = await requireUser();
+  const n = Math.trunc(amount);
+  if (!Number.isFinite(n) || n < 1) {
+    return { ok: false, error: "Enter a whole number of 1 or more." };
+  }
+
+  try {
+    const [totalRow] = await db
+      .select({ total: count() })
+      .from(prayerDays)
+      .where(eq(prayerDays.userId, user.id));
+    const total = totalRow?.total ?? 0;
+
+    if (n > total) {
+      return {
+        ok: false,
+        error: `You only have ${total.toLocaleString()} ${total === 1 ? "day" : "days"} tracked.`,
+      };
+    }
+
+    const rows = await db
+      .select({
+        fajr: prayerDays.fajr,
+        zuhr: prayerDays.zuhr,
+        asr: prayerDays.asr,
+        maghrib: prayerDays.maghrib,
+        isha: prayerDays.isha,
+        witr: prayerDays.witr,
+      })
+      .from(prayerDays)
+      .where(eq(prayerDays.userId, user.id))
+      .orderBy(orderForDirection(direction))
+      .limit(n);
+
+    const logged = rows.reduce(
+      (sum, row) =>
+        sum +
+        [row.fajr, row.zuhr, row.asr, row.maghrib, row.isha, row.witr].filter(Boolean)
+          .length,
+      0,
+    );
+
+    return { ok: true, days: n, logged };
+  } catch {
+    return { ok: false, error: "Couldn't check that. Please try again." };
+  }
+}
+
+/** Removes the N most-recently-added (or oldest) days, then renumbers what's left. */
+export async function removeDaysByCount(
+  amount: number,
+  direction: RemoveDirection,
+): Promise<{ ok: true; removed: number } | { ok: false; error: string }> {
+  const user = await requireUser();
+  const n = Math.trunc(amount);
+  if (!Number.isFinite(n) || n < 1) {
+    return { ok: false, error: "Enter a whole number of 1 or more." };
+  }
+
+  try {
+    let removed = 0;
+
+    await db.transaction(async (tx) => {
+      const targets = await tx
+        .select({ id: prayerDays.id })
+        .from(prayerDays)
+        .where(eq(prayerDays.userId, user.id))
+        .orderBy(orderForDirection(direction))
+        .limit(n);
+
+      if (targets.length === 0) return;
+
+      await tx.delete(prayerDays).where(
+        inArray(
+          prayerDays.id,
+          targets.map((t) => t.id),
+        ),
+      );
+      removed = targets.length;
+
+      await tx.execute(sql`
+        with renumbered as (
+          select id, row_number() over (order by day_index) as position
+          from ${prayerDays} where user_id = ${user.id}
+        )
+        update ${prayerDays} d
+        set day_index = renumbered.position
+        from renumbered
+        where d.id = renumbered.id and d.day_index <> renumbered.position
+      `);
+    });
+
+    revalidatePath("/");
+    revalidatePath("/ledger");
+    revalidatePath("/settings");
+    return { ok: true, removed };
+  } catch {
+    return { ok: false, error: "Couldn't remove those days. Please try again." };
+  }
+}
+
+/** How many prayers a reset would clear — shown before the user confirms it. */
+export async function previewReset(): Promise<
+  { ok: true; completed: number } | { ok: false; error: string }
+> {
+  const user = await requireUser();
+  const doneExpr = user.trackWitr
+    ? sql`fajr::int + zuhr::int + asr::int + maghrib::int + isha::int + witr::int`
+    : sql`fajr::int + zuhr::int + asr::int + maghrib::int + isha::int`;
+
+  try {
+    const [row] = await db
+      .select({ completed: sql<number>`coalesce(sum(${doneExpr}), 0)::int` })
+      .from(prayerDays)
+      .where(eq(prayerDays.userId, user.id));
+    return { ok: true, completed: row?.completed ?? 0 };
+  } catch {
+    return { ok: false, error: "Couldn't check your progress. Please try again." };
+  }
+}
+
+/**
+ * Unchecks every prayer for this account, including hidden Witr slots, but
+ * keeps every day row — the backlog size and its dates are untouched. This is
+ * "start counting again from zero," not "delete my days."
+ */
+export async function resetProgress(): Promise<
+  { ok: true; cleared: number } | { ok: false; error: string }
+> {
+  const user = await requireUser();
+  // Same expression previewReset used, so the number shown before confirming
+  // matches the number reported after — witr only counts when it's tracked.
+  const doneExpr = user.trackWitr
+    ? sql`fajr::int + zuhr::int + asr::int + maghrib::int + isha::int + witr::int`
+    : sql`fajr::int + zuhr::int + asr::int + maghrib::int + isha::int`;
+
+  try {
+    let cleared = 0;
+
+    await db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ completed: sql<number>`coalesce(sum(${doneExpr}), 0)::int` })
+        .from(prayerDays)
+        .where(eq(prayerDays.userId, user.id));
+      cleared = row?.completed ?? 0;
+
+      await tx
+        .update(prayerDays)
+        .set({
+          fajr: false,
+          zuhr: false,
+          asr: false,
+          maghrib: false,
+          isha: false,
+          witr: false,
+          fajrAt: null,
+          zuhrAt: null,
+          asrAt: null,
+          maghribAt: null,
+          ishaAt: null,
+          witrAt: null,
+        })
+        .where(eq(prayerDays.userId, user.id));
+    });
+
+    revalidatePath("/");
+    revalidatePath("/ledger");
+    revalidatePath("/settings");
+    return { ok: true, cleared };
+  } catch {
+    return { ok: false, error: "Couldn't reset your progress. Please try again." };
   }
 }
 

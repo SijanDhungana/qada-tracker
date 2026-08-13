@@ -6,11 +6,16 @@ import { MAX_GOAL, MIN_GOAL, projectionSentence } from "@/lib/projection";
 import { describeZone, supportedTimezones } from "@/lib/time";
 import {
   previewRemoval,
+  previewRemovalByCount,
+  previewReset,
   removeDays,
+  removeDaysByCount,
+  resetProgress,
   setDailyGoal,
   setTheme,
   setTimezone,
   setTrackWitr,
+  type RemoveDirection,
 } from "@/lib/actions/settings";
 import { DayInputForm } from "./DayInputForm";
 import { Sheet } from "./ui/Sheet";
@@ -73,6 +78,7 @@ export function SettingsScreen({
   const [zoneError, setZoneError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   const [, startTransition] = useTransition();
 
   function saveWitr(next: boolean) {
@@ -237,8 +243,8 @@ export function SettingsScreen({
       <Group title="Your days">
         <Row>
           <p className="text-body text-ink-2">
-            <span className="num text-ink">{totalDays.toLocaleString()}</span> days
-            tracked ·{" "}
+            <span className="num text-ink">{totalDays.toLocaleString()}</span>{" "}
+            days tracked ·{" "}
             <span className="num text-ink">
               {(totalDays * perDay).toLocaleString()}
             </span>{" "}
@@ -268,6 +274,22 @@ export function SettingsScreen({
               ›
             </span>
           </button>
+        </Row>
+        <Row>
+          <button
+            type="button"
+            onClick={() => setResetOpen(true)}
+            className="flex min-h-11 w-full items-center justify-between text-left text-body text-ink"
+          >
+            Reset progress
+            <span aria-hidden="true" className="text-ink-3">
+              ›
+            </span>
+          </button>
+          <p className="mt-1 text-meta text-ink-3">
+            Unchecks everything you&apos;ve logged. Your days stay — only what&apos;s
+            marked done is cleared.
+          </p>
         </Row>
       </Group>
 
@@ -388,9 +410,20 @@ export function SettingsScreen({
           router.refresh();
         }}
       />
+
+      <ResetProgressSheet
+        open={resetOpen}
+        onClose={() => setResetOpen(false)}
+        onDone={() => {
+          setResetOpen(false);
+          router.refresh();
+        }}
+      />
     </main>
   );
 }
+
+type RemovalPreview = { days: number; logged: number };
 
 function RemoveDaysSheet({
   open,
@@ -402,22 +435,49 @@ function RemoveDaysSheet({
   onDone: () => void;
 }) {
   const toast = useToast();
+  const [mode, setMode] = useState<"range" | "amount">("range");
+
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
-  const [preview, setPreview] = useState<{ days: number; logged: number } | null>(
-    null,
-  );
+
+  const [amount, setAmount] = useState("");
+  const [direction, setDirection] = useState<RemoveDirection>("recent");
+
+  const [preview, setPreview] = useState<RemovalPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [pending, startTransition] = useTransition();
 
+  function resetFields() {
+    setStart("");
+    setEnd("");
+    setAmount("");
+    setPreview(null);
+    setConfirmText("");
+    setError(null);
+  }
+
+  function switchMode(next: "range" | "amount") {
+    setMode(next);
+    setPreview(null);
+    setConfirmText("");
+    setError(null);
+  }
+
   function check() {
     setError(null);
     startTransition(async () => {
-      const result = await previewRemoval(start, end).catch(() => ({
-        ok: false as const,
-        error: "Couldn't check that range.",
-      }));
+      const result =
+        mode === "range"
+          ? await previewRemoval(start, end).catch(() => ({
+              ok: false as const,
+              error: "Couldn't check that range.",
+            }))
+          : await previewRemovalByCount(Number(amount), direction).catch(() => ({
+              ok: false as const,
+              error: "Couldn't check that.",
+            }));
+
       if (!result.ok) {
         setError(result.error);
         setPreview(null);
@@ -429,61 +489,128 @@ function RemoveDaysSheet({
 
   function confirm() {
     startTransition(async () => {
-      const result = await removeDays(start, end).catch(() => ({
-        ok: false as const,
-        error: "Couldn't remove those days.",
-      }));
+      const result =
+        mode === "range"
+          ? await removeDays(start, end).catch(() => ({
+              ok: false as const,
+              error: "Couldn't remove those days.",
+            }))
+          : await removeDaysByCount(Number(amount), direction).catch(() => ({
+              ok: false as const,
+              error: "Couldn't remove those days.",
+            }));
+
       if (!result.ok) {
         setError(result.error);
         return;
       }
       toast({ message: `${result.removed.toLocaleString()} days removed.` });
-      setStart("");
-      setEnd("");
-      setPreview(null);
-      setConfirmText("");
+      resetFields();
       onDone();
     });
   }
+
+  const amountValid = Number.isInteger(Number(amount)) && Number(amount) >= 1;
 
   return (
     <Sheet
       open={open}
       onClose={onClose}
       title="Remove days"
-      description="Only days with real dates can be removed by range."
+      description="Remove a specific date range, or a number of days from either end of your list."
     >
       <div className="flex flex-col gap-4">
-        <div>
-          <label htmlFor="removeStart" className="mb-1.5 block text-meta text-ink-2">
-            From
-          </label>
-          <input
-            id="removeStart"
-            type="date"
-            value={start}
-            onChange={(event) => {
-              setStart(event.target.value);
-              setPreview(null);
-            }}
-            className={inputClass}
-          />
-        </div>
-        <div>
-          <label htmlFor="removeEnd" className="mb-1.5 block text-meta text-ink-2">
-            To
-          </label>
-          <input
-            id="removeEnd"
-            type="date"
-            value={end}
-            onChange={(event) => {
-              setEnd(event.target.value);
-              setPreview(null);
-            }}
-            className={inputClass}
-          />
-        </div>
+        <SegmentedControl
+          label="How to choose what to remove"
+          value={mode}
+          onChange={switchMode}
+          options={[
+            { value: "range", label: "By date range" },
+            { value: "amount", label: "By amount" },
+          ]}
+        />
+
+        {mode === "range" ? (
+          <div className="flex flex-col gap-4">
+            <div>
+              <label
+                htmlFor="removeStart"
+                className="mb-1.5 block text-meta text-ink-2"
+              >
+                From
+              </label>
+              <input
+                id="removeStart"
+                type="date"
+                value={start}
+                onChange={(event) => {
+                  setStart(event.target.value);
+                  setPreview(null);
+                }}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label htmlFor="removeEnd" className="mb-1.5 block text-meta text-ink-2">
+                To
+              </label>
+              <input
+                id="removeEnd"
+                type="date"
+                value={end}
+                onChange={(event) => {
+                  setEnd(event.target.value);
+                  setPreview(null);
+                }}
+                className={inputClass}
+              />
+            </div>
+            <p className="text-meta text-ink-3">
+              Only days with a real date can be removed this way — days added by
+              amount have none. Use &ldquo;By amount&rdquo; for those.
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div>
+              <label htmlFor="removeAmount" className="mb-1.5 block text-meta text-ink-2">
+                How many days to remove
+              </label>
+              <input
+                id="removeAmount"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                placeholder="0"
+                value={amount}
+                onChange={(event) => {
+                  setAmount(event.target.value);
+                  setPreview(null);
+                }}
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <p className="mb-1.5 text-meta text-ink-2">Starting from</p>
+              <SegmentedControl
+                label="Which days to remove"
+                size="sm"
+                value={direction}
+                onChange={(value) => {
+                  setDirection(value);
+                  setPreview(null);
+                }}
+                options={[
+                  { value: "recent", label: "Most recently added" },
+                  { value: "oldest", label: "Oldest first" },
+                ]}
+              />
+            </div>
+            <p className="text-meta text-ink-3">
+              Works for every day, whether it has a date or not.
+            </p>
+          </div>
+        )}
 
         {error ? (
           <p role="alert" className="text-meta text-danger">
@@ -495,18 +622,20 @@ function RemoveDaysSheet({
           <button
             type="button"
             onClick={check}
-            disabled={!start || !end || pending}
+            disabled={
+              pending || (mode === "range" ? !start || !end : !amountValid)
+            }
             className="min-h-12 w-full rounded-md border border-line text-body font-medium text-ink-2 disabled:opacity-50"
           >
-            Check this range
+            {mode === "range" ? "Check this range" : "Check this amount"}
           </button>
         ) : (
           <div className="flex flex-col gap-3 rounded-md border border-danger/50 bg-danger-wash p-4">
             <p className="text-body text-ink">
               This removes{" "}
               <span className="num">{preview.days.toLocaleString()}</span> days and{" "}
-              <span className="num">{preview.logged.toLocaleString()}</span> logged
-              prayers. This can&apos;t be undone.
+              <span className="num">{preview.logged.toLocaleString()}</span>{" "}
+              logged prayers. This can&apos;t be undone.
             </p>
 
             <div>
@@ -532,6 +661,118 @@ function RemoveDaysSheet({
               className="min-h-12 w-full rounded-md bg-danger text-body font-semibold text-paper disabled:opacity-50"
             >
               {pending ? "Removing…" : `Remove ${preview.days.toLocaleString()} days`}
+            </button>
+          </div>
+        )}
+      </div>
+    </Sheet>
+  );
+}
+
+function ResetProgressSheet({
+  open,
+  onClose,
+  onDone,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const toast = useToast();
+  const [completed, setCompleted] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmText, setConfirmText] = useState("");
+  const [pending, startTransition] = useTransition();
+
+  // Load the count the moment the sheet opens, rather than waiting for a tap —
+  // there's nothing else to configure here, so a check button is just a delay.
+  useEffect(() => {
+    if (!open) {
+      setCompleted(null);
+      setConfirmText("");
+      setError(null);
+      return;
+    }
+    startTransition(async () => {
+      const result = await previewReset().catch(() => ({
+        ok: false as const,
+        error: "Couldn't check your progress.",
+      }));
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setCompleted(result.completed);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  function confirm() {
+    startTransition(async () => {
+      const result = await resetProgress().catch(() => ({
+        ok: false as const,
+        error: "Couldn't reset your progress.",
+      }));
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      toast({ message: `${result.cleared.toLocaleString()} prayers reset.` });
+      onDone();
+    });
+  }
+
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Reset progress"
+      description="Unchecks everything. Your days and their dates stay exactly as they are."
+    >
+      <div className="flex flex-col gap-4">
+        {error ? (
+          <p role="alert" className="text-meta text-danger">
+            {error}
+          </p>
+        ) : null}
+
+        {completed === null ? (
+          <p className="text-meta text-ink-3">Checking your progress…</p>
+        ) : completed === 0 ? (
+          <p className="text-meta text-ink-3">
+            Nothing is checked off yet — there&apos;s nothing to reset.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-3 rounded-md border border-danger/50 bg-danger-wash p-4">
+            <p className="text-body text-ink">
+              This unchecks all{" "}
+              <span className="num">{completed.toLocaleString()}</span>{" "}
+              prayers you&apos;ve logged. This can&apos;t be undone.
+            </p>
+
+            <div>
+              <label
+                htmlFor="resetConfirm"
+                className="mb-1.5 block text-meta text-ink-2"
+              >
+                Type <span className="num text-ink">reset</span> to confirm
+              </label>
+              <input
+                id="resetConfirm"
+                value={confirmText}
+                onChange={(event) => setConfirmText(event.target.value)}
+                autoComplete="off"
+                className={inputClass}
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={confirm}
+              disabled={confirmText.trim().toLowerCase() !== "reset" || pending}
+              className="min-h-12 w-full rounded-md bg-danger text-body font-semibold text-paper disabled:opacity-50"
+            >
+              {pending ? "Resetting…" : `Reset ${completed.toLocaleString()} prayers`}
             </button>
           </div>
         )}
