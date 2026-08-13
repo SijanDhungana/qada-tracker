@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { PRAYER_LABELS, prayersFor, type PrayerKey } from "@/lib/prayers";
 import { milestone, projectionSentence } from "@/lib/projection";
-import { startOfLocalDay, type MasjidEntry } from "@/lib/masjid";
+import type { MasjidEntry } from "@/lib/masjid";
 import { logPrayer, undoSlot, unlogLatest } from "@/lib/actions/log";
 import { PrayerCounter } from "./PrayerCounter";
 import { LedgerGrid, type GridDay } from "./LedgerGrid";
@@ -36,6 +36,9 @@ export type TodayData = {
   targetDayId: string | null;
   recentLogs: RecentLog[];
   today: string;
+  timezone: string;
+  /** Midnight in the account's timezone, as an instant. */
+  dayStartIso: string;
   masjidToday: MasjidEntry[];
 };
 
@@ -67,9 +70,9 @@ export function TodayScreen({ data }: { data: TodayData }) {
     }
   }, [data]);
 
-  // The browser owns the timezone, so today's boundary is computed here and
-  // sent to the server rather than guessed there.
-  const dayStart = useMemo(() => startOfLocalDay().toISOString(), []);
+  // One boundary for the whole app: midnight in the account's timezone,
+  // resolved on the server so both halves agree on what "today" means.
+  const dayStart = data.dayStartIso;
 
   const loggedToday = useMemo(() => {
     const start = new Date(dayStart).getTime();
@@ -192,7 +195,7 @@ export function TodayScreen({ data }: { data: TodayData }) {
     });
   }
 
-  const projection = projectionSentence(outstandingTotal, data.dailyGoal);
+  const projection = projectionSentence(outstandingTotal, data.dailyGoal, data.timezone);
   const nextMilestone = milestone(completed, outstandingTotal, data.dailyGoal);
   const allCleared = outstandingTotal <= 0 && data.totalSlots > 0;
 
@@ -306,7 +309,11 @@ export function TodayScreen({ data }: { data: TodayData }) {
       )}
 
       {/* 4. Today at the masjid. */}
-      <MasjidStrip today={data.today} initialEntries={data.masjidToday} />
+      <MasjidStrip
+        today={data.today}
+        timezone={data.timezone}
+        initialEntries={data.masjidToday}
+      />
 
       {/* 5. The ledger grid. */}
       <section aria-labelledby="grid-heading" className="flex flex-col gap-3">

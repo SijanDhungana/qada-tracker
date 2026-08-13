@@ -23,8 +23,14 @@ export function finishDate(outstanding: number, perDay: number, from = new Date(
   return date;
 }
 
-export function formatFinishDate(date: Date): string {
+/**
+ * Formatted in the account's timezone, not the runtime's. Without an explicit
+ * zone the server (UTC) and a browser further east render different dates for
+ * the same instant, which both misreports the date and breaks hydration.
+ */
+export function formatFinishDate(date: Date, timeZone: string): string {
   return date.toLocaleDateString("en-GB", {
+    timeZone,
     day: "numeric",
     month: "long",
     year: "numeric",
@@ -32,10 +38,14 @@ export function formatFinishDate(date: Date): string {
 }
 
 /** "At 2 a day, you'll finish around 14 March 2027." */
-export function projectionSentence(outstanding: number, perDay: number): string | null {
+export function projectionSentence(
+  outstanding: number,
+  perDay: number,
+  timeZone: string,
+): string | null {
   const date = finishDate(outstanding, perDay);
   if (!date) return null;
-  return `At ${clampGoal(perDay)} a day, you'll finish around ${formatFinishDate(date)}.`;
+  return `At ${clampGoal(perDay)} a day, you'll finish around ${formatFinishDate(date, timeZone)}.`;
 }
 
 /**

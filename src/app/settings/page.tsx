@@ -35,6 +35,7 @@ export default async function SettingsPage() {
         trackWitr={user.trackWitr}
         dailyGoal={user.dailyGoal}
         theme={user.theme}
+        timezone={user.timezone}
         totalDays={totalDays}
         outstanding={outstanding}
         perDay={perDay}

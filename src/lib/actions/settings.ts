@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { prayerDays, users } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import { clampGoal } from "@/lib/projection";
+import { isValidTimezone } from "@/lib/time";
 import {
   daysFromAmount,
   daysFromDateRange,
@@ -48,6 +49,22 @@ export async function setDailyGoal(value: number): Promise<SettingsResult> {
     return { ok: false, error: "Couldn't save your goal. Please try again." };
   }
   revalidatePath("/");
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+export async function setTimezone(value: string): Promise<SettingsResult> {
+  const user = await requireUser();
+  if (!isValidTimezone(value)) {
+    return { ok: false, error: "That doesn't look like a valid timezone." };
+  }
+  try {
+    await db.update(users).set({ timezone: value }).where(eq(users.id, user.id));
+  } catch {
+    return { ok: false, error: "Couldn't save that setting. Please try again." };
+  }
+  revalidatePath("/");
+  revalidatePath("/masjid");
   revalidatePath("/settings");
   return { ok: true };
 }

@@ -4,6 +4,7 @@ import { masjidPrayers } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import type { DailyPrayerKey } from "@/lib/prayers";
 import type { MasjidEntry, MasjidStatus } from "@/lib/masjid";
+import { shiftDateKey, todayKeyInZone } from "@/lib/time";
 import { AppShell } from "@/components/AppShell";
 import { MasjidHistory } from "@/components/MasjidHistory";
 
@@ -14,9 +15,8 @@ export default async function MasjidPage() {
   const user = await requireUser();
 
   // Ninety days back covers the longest range the screen offers.
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - 90);
-  const cutoff = `${cutoffDate.getFullYear()}-${String(cutoffDate.getMonth() + 1).padStart(2, "0")}-${String(cutoffDate.getDate()).padStart(2, "0")}`;
+  const todayKey = todayKeyInZone(user.timezone);
+  const cutoff = shiftDateKey(todayKey, -89);
 
   const rows = await db
     .select({
@@ -45,7 +45,7 @@ export default async function MasjidPage() {
 
   return (
     <AppShell username={user.username} theme={user.theme}>
-      <MasjidHistory entries={entries} />
+      <MasjidHistory entries={entries} today={todayKey} />
     </AppShell>
   );
 }

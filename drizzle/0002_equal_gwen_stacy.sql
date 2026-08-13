@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "timezone" text DEFAULT 'America/Toronto' NOT NULL;

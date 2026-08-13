@@ -19,6 +19,8 @@ export const users = pgTable("users", {
   dailyGoal: integer("daily_goal").notNull().default(2),
   /** "system" | "dark" | "light" */
   theme: text("theme").notNull().default("system"),
+  /** IANA zone that defines the midnight-to-midnight day for this account. */
+  timezone: text("timezone").notNull().default("America/Toronto"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

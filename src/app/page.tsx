@@ -6,6 +6,7 @@ import { requireUser } from "@/lib/session";
 import { ALL_PRAYERS, prayersFor, type PrayerKey } from "@/lib/prayers";
 import type { DailyPrayerKey } from "@/lib/prayers";
 import type { MasjidEntry, MasjidStatus } from "@/lib/masjid";
+import { startOfTodayInZone, todayKeyInZone } from "@/lib/time";
 import { AppShell } from "@/components/AppShell";
 import { TodayScreen, type RecentLog, type TodayData } from "@/components/TodayScreen";
 import type { GridDay } from "@/components/LedgerGrid";
@@ -64,8 +65,9 @@ export default async function TodayPage() {
     0,
   );
 
-  const today = new Date();
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  // The day boundary comes from the account's timezone, not the server's clock.
+  const todayKey = todayKeyInZone(user.timezone);
+  const dayStartIso = startOfTodayInZone(user.timezone).toISOString();
 
   const [gridRows, targetRow, recentRows, masjidRows] = await Promise.all([
     db
@@ -165,6 +167,8 @@ export default async function TodayPage() {
     targetDayId: targetRow[0]?.id ?? null,
     recentLogs,
     today: todayKey,
+    timezone: user.timezone,
+    dayStartIso,
     masjidToday,
   };
 

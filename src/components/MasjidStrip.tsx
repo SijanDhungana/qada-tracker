@@ -5,19 +5,14 @@ import { useState, useTransition } from "react";
 import { BASE_PRAYERS, PRAYER_LABELS, type DailyPrayerKey } from "@/lib/prayers";
 import {
   MASJID_STATUSES,
-  MAX_REASON_LENGTH,
-  REASON_SUGGESTIONS,
-  STATUS_LABELS,
   STATUS_SHORT,
-  formatTime,
   type MasjidEntry,
   type MasjidStatus,
 } from "@/lib/masjid";
+import { formatTimeInZone } from "@/lib/time";
 import { clearMasjidPrayer, recordMasjidPrayer } from "@/lib/actions/masjid";
-import { Sheet } from "./ui/Sheet";
+import { MasjidEditorSheet, type EditorTarget } from "./MasjidEditorSheet";
 import { useToast } from "./ui/Toast";
-
-type Draft = { prayer: DailyPrayerKey; status: MasjidStatus };
 
 const STATUS_STYLES: Record<MasjidStatus, string> = {
   masjid: "border-done bg-done-wash text-done",
@@ -32,16 +27,18 @@ const STATUS_STYLES: Record<MasjidStatus, string> = {
  */
 export function MasjidStrip({
   today,
+  timezone,
   initialEntries,
 }: {
   today: string;
+  timezone: string;
   initialEntries: MasjidEntry[];
 }) {
   const toast = useToast();
   const [entries, setEntries] = useState<Record<string, MasjidEntry>>(() =>
     Object.fromEntries(initialEntries.map((entry) => [entry.prayer, entry])),
   );
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [target, setTarget] = useState<EditorTarget | null>(null);
   const [pending, startTransition] = useTransition();
 
   function save(
@@ -107,9 +104,16 @@ export function MasjidStrip({
   }
 
   function choose(prayer: DailyPrayerKey, status: MasjidStatus) {
-    // Anything other than the masjid gets the chance to note why.
+    // At the masjid needs no explanation; anything else offers a note.
     if (status === "masjid") save(prayer, "masjid", null);
-    else setDraft({ prayer, status });
+    else
+      setTarget({
+        dateKey: today,
+        prayer,
+        status,
+        reason: entries[prayer]?.reason ?? null,
+        askStatus: false,
+      });
   }
 
   const loggedCount = Object.keys(entries).length;
@@ -131,10 +135,6 @@ export function MasjidStrip({
         </Link>
       </div>
 
-      {/*
-        Naming both numbers avoids the tautology "3 of 3 logged at the masjid",
-        which reads as though 3 were all there were to pray.
-      */}
       <p className="text-meta text-ink-3">
         {loggedCount === 0
           ? "Log each prayer as you pray it."
@@ -156,7 +156,7 @@ export function MasjidStrip({
                   </p>
                   {entry ? (
                     <p className="num text-meta text-ink-3">
-                      {formatTime(entry.loggedAt)}
+                      {formatTimeInZone(entry.loggedAt, timezone)}
                     </p>
                   ) : null}
                 </div>
@@ -198,100 +198,14 @@ export function MasjidStrip({
         })}
       </ul>
 
-      <ReasonSheet
-        draft={draft}
-        onClose={() => setDraft(null)}
-        onSubmit={(reason) => {
-          if (draft) save(draft.prayer, draft.status, reason);
-          setDraft(null);
+      <MasjidEditorSheet
+        target={target}
+        onClose={() => setTarget(null)}
+        onSave={(status, reason) => {
+          if (target) save(target.prayer, status, reason);
+          setTarget(null);
         }}
       />
     </section>
-  );
-}
-
-function ReasonSheet({
-  draft,
-  onClose,
-  onSubmit,
-}: {
-  draft: Draft | null;
-  onClose: () => void;
-  onSubmit: (reason: string | null) => void;
-}) {
-  const [reason, setReason] = useState("");
-
-  return (
-    <Sheet
-      open={draft !== null}
-      onClose={() => {
-        setReason("");
-        onClose();
-      }}
-      title={
-        draft
-          ? `${PRAYER_LABELS[draft.prayer]} — ${STATUS_LABELS[draft.status].toLowerCase()}`
-          : ""
-      }
-      description="Add a note if it helps you spot a pattern. You can skip this."
-    >
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap gap-2">
-          {REASON_SUGGESTIONS.map((suggestion) => (
-            <button
-              key={suggestion}
-              type="button"
-              onClick={() => setReason(suggestion)}
-              aria-pressed={reason === suggestion}
-              className={`min-h-11 rounded-md border px-3 text-meta font-medium transition-colors ${
-                reason === suggestion
-                  ? "border-brand bg-brand-wash text-brand"
-                  : "border-line bg-surface-2 text-ink-2 hover:text-ink"
-              }`}
-            >
-              {suggestion}
-            </button>
-          ))}
-        </div>
-
-        <div>
-          <label htmlFor="masjid-reason" className="mb-1.5 block text-meta text-ink-2">
-            Or write your own
-          </label>
-          <input
-            id="masjid-reason"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            maxLength={MAX_REASON_LENGTH}
-            placeholder="Optional"
-            className="min-h-11 w-full rounded-md border border-line bg-surface-2 px-3 text-body text-ink
-                       outline-none placeholder:text-ink-3 focus:border-brand"
-          />
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              onSubmit(null);
-              setReason("");
-            }}
-            className="min-h-12 flex-1 rounded-md border border-line text-body font-medium text-ink-2 hover:bg-surface-2"
-          >
-            Skip
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              onSubmit(reason.trim() || null);
-              setReason("");
-            }}
-            className="min-h-12 flex-1 rounded-md bg-brand text-body font-semibold text-done-ink"
-          >
-            Save
-          </button>
-        </div>
-      </div>
-    </Sheet>
   );
 }

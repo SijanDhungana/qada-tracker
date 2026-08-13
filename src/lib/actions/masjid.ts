@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { masjidPrayers } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import { isDailyPrayerKey, type DailyPrayerKey } from "@/lib/prayers";
+import { todayKeyInZone } from "@/lib/time";
 import {
   isMasjidStatus,
   MAX_REASON_LENGTH,
@@ -38,6 +39,10 @@ export async function recordMasjidPrayer(input: {
   }
   if (!isMasjidStatus(input.status)) {
     return { ok: false, error: "Unknown status." };
+  }
+  // Past days are editable; days that haven't happened yet are not.
+  if (input.prayerDate > todayKeyInZone(user.timezone)) {
+    return { ok: false, error: "That day hasn't happened yet." };
   }
 
   // A reason only means anything when the prayer wasn't at the masjid.

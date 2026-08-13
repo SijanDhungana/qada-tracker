@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { MAX_GOAL, MIN_GOAL, projectionSentence } from "@/lib/projection";
+import { describeZone, supportedTimezones } from "@/lib/time";
 import {
   previewRemoval,
   removeDays,
   setDailyGoal,
   setTheme,
+  setTimezone,
   setTrackWitr,
 } from "@/lib/actions/settings";
 import { DayInputForm } from "./DayInputForm";
@@ -47,6 +49,7 @@ export function SettingsScreen({
   trackWitr,
   dailyGoal,
   theme,
+  timezone,
   totalDays,
   outstanding,
   perDay,
@@ -55,6 +58,7 @@ export function SettingsScreen({
   trackWitr: boolean;
   dailyGoal: number;
   theme: string;
+  timezone: string;
   totalDays: number;
   outstanding: number;
   perDay: number;
@@ -65,6 +69,8 @@ export function SettingsScreen({
   const [witr, setWitr] = useState(trackWitr);
   const [goal, setGoal] = useState(dailyGoal);
   const [themeValue, setThemeValue] = useState(theme);
+  const [zone, setZone] = useState(timezone);
+  const [zoneError, setZoneError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [, startTransition] = useTransition();
@@ -94,6 +100,24 @@ export function SettingsScreen({
     });
   }
 
+  function saveZone(next: string) {
+    const previous = zone;
+    setZone(next);
+    setZoneError(null);
+    startTransition(async () => {
+      const result = await setTimezone(next).catch(() => ({
+        ok: false as const,
+        error: "Couldn't save that setting.",
+      }));
+      if (!result.ok) {
+        setZone(previous);
+        setZoneError(result.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
   function saveTheme(next: string) {
     setThemeValue(next);
     // Apply immediately, and mirror it so the pre-paint script has it next time.
@@ -112,7 +136,23 @@ export function SettingsScreen({
     });
   }
 
-  const projection = projectionSentence(outstanding, goal);
+  const zones = useMemo(() => {
+    const all = supportedTimezones();
+    // Keep the saved zone selectable even if this runtime doesn't list it.
+    return all.includes(zone) ? all : [zone, ...all];
+  }, [zone]);
+
+  // Rendered only after mount, and refreshed on a timer. Seeding it during SSR
+  // would bake in the server's instant and hydrate against a different one.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const zoneNow = now === null ? null : describeZone(zone, new Date(now));
+
+  const projection = projectionSentence(outstanding, goal, zone);
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-6 sm:px-6">
@@ -228,6 +268,43 @@ export function SettingsScreen({
               ›
             </span>
           </button>
+        </Row>
+      </Group>
+
+      <Group title="Your day">
+        <Row>
+          <label htmlFor="timezone" className="block text-body font-medium text-ink">
+            Timezone
+          </label>
+          <p className="mt-0.5 mb-3 text-meta text-ink-3">
+            Your day runs midnight to midnight here. Everything logged is stamped
+            against this clock.
+          </p>
+          <select
+            id="timezone"
+            value={zone}
+            onChange={(event) => saveZone(event.target.value)}
+            className={inputClass}
+          >
+            {zones.map((option) => (
+              <option key={option} value={option}>
+                {option.replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
+          <p className="mt-2 min-h-5 text-meta text-ink-3">
+            {zoneNow ? (
+              <>
+                Right now it&apos;s{" "}
+                <span className="num text-ink-2">{zoneNow}</span> there.
+              </>
+            ) : null}
+          </p>
+          {zoneError ? (
+            <p role="alert" className="mt-2 text-meta text-danger">
+              {zoneError}
+            </p>
+          ) : null}
         </Row>
       </Group>
 
