@@ -755,7 +755,7 @@ function ResetProgressSheet({
                 htmlFor="resetConfirm"
                 className="mb-1.5 block text-meta text-ink-2"
               >
-                Type <span className="num text-ink">reset</span> to confirm
+                Type <span className="num text-ink">confirmed</span> to proceed
               </label>
               <input
                 id="resetConfirm"
@@ -769,7 +769,7 @@ function ResetProgressSheet({
             <button
               type="button"
               onClick={confirm}
-              disabled={confirmText.trim().toLowerCase() !== "reset" || pending}
+              disabled={confirmText.trim().toLowerCase() !== "confirmed" || pending}
               className="min-h-12 w-full rounded-md bg-danger text-body font-semibold text-paper disabled:opacity-50"
             >
               {pending ? "Resetting…" : `Reset ${completed.toLocaleString()} prayers`}
