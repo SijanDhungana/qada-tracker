@@ -43,10 +43,71 @@ export const REASON_SUGGESTIONS = [
 
 export const MAX_REASON_LENGTH = 120;
 
+/**
+ * Whether the jama'ah was caught from the start. Only meaningful alongside
+ * status "masjid" — praying alone or missing it has no timing to record.
+ */
+export const MASJID_TIMINGS = ["on_time", "late"] as const;
+export type MasjidTiming = (typeof MASJID_TIMINGS)[number];
+
+export function isMasjidTiming(value: unknown): value is MasjidTiming {
+  return (
+    typeof value === "string" && (MASJID_TIMINGS as readonly string[]).includes(value)
+  );
+}
+
+export const TIMING_LABELS: Record<MasjidTiming, string> = {
+  on_time: "On time",
+  late: "Late",
+};
+
+/** Rak'ahs in each fard prayer, which bounds the "where did you join" options. */
+export const RAKAH_COUNT: Record<DailyPrayerKey, number> = {
+  fajr: 2,
+  zuhr: 4,
+  asr: 4,
+  maghrib: 3,
+  isha: 4,
+};
+
+/** Caught the final sitting but no full rak'ah with the imam. */
+export const TASHAHHUD = "tashahhud";
+
+const ORDINALS = ["1st", "2nd", "3rd", "4th"];
+
+export function rakahOptions(
+  prayer: DailyPrayerKey,
+): { value: string; label: string }[] {
+  const options = Array.from({ length: RAKAH_COUNT[prayer] }, (_, index) => ({
+    value: `rakah-${index + 1}`,
+    label: ORDINALS[index],
+  }));
+  return [...options, { value: TASHAHHUD, label: "Last sitting" }];
+}
+
+export function isRakahValue(value: unknown, prayer: DailyPrayerKey): boolean {
+  return (
+    typeof value === "string" &&
+    rakahOptions(prayer).some((option) => option.value === value)
+  );
+}
+
+/** "joined at the 3rd rak'ah" / "caught the last sitting" */
+export function describeRakah(value: string | null): string | null {
+  if (!value) return null;
+  if (value === TASHAHHUD) return "caught the last sitting";
+  const match = /^rakah-(\d)$/.exec(value);
+  if (!match) return null;
+  const ordinal = ORDINALS[Number(match[1]) - 1] ?? `${match[1]}th`;
+  return `joined at the ${ordinal} rak'ah`;
+}
+
 export type MasjidEntry = {
   prayerDate: string;
   prayer: DailyPrayerKey;
   status: MasjidStatus;
+  timing: MasjidTiming | null;
+  joinedRakah: string | null;
   reason: string | null;
   loggedAt: string;
 };
@@ -58,13 +119,25 @@ export type MasjidSummary = {
   alone: number;
   missed: number;
   logged: number;
+  /** Of the masjid ones, how many caught the jama'ah from the start. */
+  onTime: number;
+  late: number;
 };
 
 export function summarise(entries: MasjidEntry[]): MasjidSummary {
-  const summary: MasjidSummary = { masjid: 0, alone: 0, missed: 0, logged: 0 };
+  const summary: MasjidSummary = {
+    masjid: 0,
+    alone: 0,
+    missed: 0,
+    logged: 0,
+    onTime: 0,
+    late: 0,
+  };
   for (const entry of entries) {
     summary[entry.status] += 1;
     summary.logged += 1;
+    if (entry.status === "masjid" && entry.timing === "on_time") summary.onTime += 1;
+    if (entry.status === "masjid" && entry.timing === "late") summary.late += 1;
   }
   return summary;
 }

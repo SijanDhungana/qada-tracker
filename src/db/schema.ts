@@ -21,6 +21,8 @@ export const users = pgTable("users", {
   theme: text("theme").notNull().default("system"),
   /** IANA zone that defines the midnight-to-midnight day for this account. */
   timezone: text("timezone").notNull().default("America/Toronto"),
+  /** Opt-in: adds the night prayer to the Today screen and its history. */
+  trackTahajjud: boolean("track_tahajjud").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -79,6 +81,10 @@ export const masjidPrayers = pgTable(
     prayer: text("prayer").notNull(),
     /** masjid | alone | missed */
     status: text("status").notNull(),
+    /** on_time | late — only meaningful when status is "masjid". */
+    timing: text("timing"),
+    /** rakah-1 … rakah-4 | tashahhud — where the jama'ah was joined when late. */
+    joinedRakah: text("joined_rakah"),
     /** Free text or one of the suggested notes; only meaningful when not "masjid". */
     reason: text("reason"),
     loggedAt: timestamp("logged_at", { withTimezone: true })
@@ -95,6 +101,31 @@ export const masjidPrayers = pgTable(
   ],
 );
 
+/**
+ * The night prayer, kept in its own table rather than folded into
+ * masjid_prayers: its answers are about whether it happened at all, not about
+ * where it was prayed, and mixing them would corrupt the congregation stats.
+ */
+export const tahajjudNights = pgTable(
+  "tahajjud_nights",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    prayerDate: date("prayer_date").notNull(),
+    /** prayed | woke | slept */
+    status: text("status").notNull(),
+    loggedAt: timestamp("logged_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("tahajjud_nights_user_date_key").on(table.userId, table.prayerDate),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type PrayerDay = typeof prayerDays.$inferSelect;
 export type MasjidPrayer = typeof masjidPrayers.$inferSelect;
+export type TahajjudNight = typeof tahajjudNights.$inferSelect;

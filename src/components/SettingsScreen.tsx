@@ -14,6 +14,7 @@ import {
   setDailyGoal,
   setTheme,
   setTimezone,
+  setTrackTahajjud,
   setTrackWitr,
   type RemoveDirection,
 } from "@/lib/actions/settings";
@@ -52,6 +53,7 @@ const inputClass =
 export function SettingsScreen({
   username,
   trackWitr,
+  trackTahajjud,
   dailyGoal,
   theme,
   timezone,
@@ -61,6 +63,7 @@ export function SettingsScreen({
 }: {
   username: string;
   trackWitr: boolean;
+  trackTahajjud: boolean;
   dailyGoal: number;
   theme: string;
   timezone: string;
@@ -72,6 +75,7 @@ export function SettingsScreen({
   const toast = useToast();
 
   const [witr, setWitr] = useState(trackWitr);
+  const [tahajjud, setTahajjud] = useState(trackTahajjud);
   const [goal, setGoal] = useState(dailyGoal);
   const [themeValue, setThemeValue] = useState(theme);
   const [zone, setZone] = useState(timezone);
@@ -90,6 +94,22 @@ export function SettingsScreen({
       }));
       if (!result.ok) {
         setWitr(!next);
+        toast({ message: result.error, tone: "danger" });
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  function saveTahajjud(next: boolean) {
+    setTahajjud(next);
+    startTransition(async () => {
+      const result = await setTrackTahajjud(next).catch(() => ({
+        ok: false as const,
+        error: "Couldn't save that setting.",
+      }));
+      if (!result.ok) {
+        setTahajjud(!next);
         toast({ message: result.error, tone: "danger" });
         return;
       }
@@ -236,6 +256,40 @@ export function SettingsScreen({
           <p className="mt-3 text-meta text-ink-3">
             Turning this off just hides Witr — any Witr you&apos;ve already checked
             off is kept and comes back if you turn it on again.
+          </p>
+        </Row>
+        <Row>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={tahajjud}
+            onClick={() => saveTahajjud(!tahajjud)}
+            className="flex w-full items-center justify-between gap-4 text-left"
+          >
+            <span>
+              <span className="block text-body font-medium text-ink">
+                Track Tahajjud
+              </span>
+              <span className="mt-0.5 block text-meta text-ink-3">
+                Adds the night prayer to Today and its own history.
+              </span>
+            </span>
+            <span
+              aria-hidden="true"
+              className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                tahajjud ? "bg-brand" : "bg-surface-3"
+              }`}
+            >
+              <span
+                className={`absolute top-1 size-5 rounded-full bg-paper transition-all ${
+                  tahajjud ? "left-6" : "left-1"
+                }`}
+              />
+            </span>
+          </button>
+          <p className="mt-3 text-meta text-ink-3">
+            Recorded as prayed, woke without praying, or slept through — separate
+            from the qada count, and never part of it.
           </p>
         </Row>
       </Group>

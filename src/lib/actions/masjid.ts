@@ -9,9 +9,12 @@ import { isDailyPrayerKey, type DailyPrayerKey } from "@/lib/prayers";
 import { todayKeyInZone } from "@/lib/time";
 import {
   isMasjidStatus,
+  isMasjidTiming,
+  isRakahValue,
   MAX_REASON_LENGTH,
   type MasjidEntry,
   type MasjidStatus,
+  type MasjidTiming,
 } from "@/lib/masjid";
 
 export type MasjidResult = { ok: true } | { ok: false; error: string };
@@ -27,6 +30,8 @@ export async function recordMasjidPrayer(input: {
   prayerDate: string;
   prayer: DailyPrayerKey;
   status: MasjidStatus;
+  timing?: MasjidTiming | null;
+  joinedRakah?: string | null;
   reason?: string | null;
 }): Promise<MasjidResult> {
   const user = await requireUser();
@@ -45,11 +50,20 @@ export async function recordMasjidPrayer(input: {
     return { ok: false, error: "That day hasn't happened yet." };
   }
 
-  // A reason only means anything when the prayer wasn't at the masjid.
-  const reason =
-    input.status === "masjid"
-      ? null
-      : (input.reason ?? "").trim().slice(0, MAX_REASON_LENGTH) || null;
+  // Timing only applies at the masjid; the rak'ah joined only when late.
+  const timing =
+    input.status === "masjid" && isMasjidTiming(input.timing) ? input.timing : null;
+
+  const joinedRakah =
+    timing === "late" && isRakahValue(input.joinedRakah, input.prayer)
+      ? (input.joinedRakah as string)
+      : null;
+
+  // A note explains either being late, or not being at the masjid at all.
+  const wantsReason = input.status !== "masjid" || timing === "late";
+  const reason = wantsReason
+    ? (input.reason ?? "").trim().slice(0, MAX_REASON_LENGTH) || null
+    : null;
 
   try {
     await db
@@ -59,6 +73,8 @@ export async function recordMasjidPrayer(input: {
         prayerDate: input.prayerDate,
         prayer: input.prayer,
         status: input.status,
+        timing,
+        joinedRakah,
         reason,
         loggedAt: new Date(),
       })
@@ -68,7 +84,13 @@ export async function recordMasjidPrayer(input: {
           masjidPrayers.prayerDate,
           masjidPrayers.prayer,
         ],
-        set: { status: input.status, reason, loggedAt: new Date() },
+        set: {
+          status: input.status,
+          timing,
+          joinedRakah,
+          reason,
+          loggedAt: new Date(),
+        },
       });
 
     revalidatePath("/");
@@ -118,6 +140,8 @@ export async function readMasjidEntries(since: string): Promise<MasjidEntry[]> {
       prayerDate: masjidPrayers.prayerDate,
       prayer: masjidPrayers.prayer,
       status: masjidPrayers.status,
+      timing: masjidPrayers.timing,
+      joinedRakah: masjidPrayers.joinedRakah,
       reason: masjidPrayers.reason,
       loggedAt: masjidPrayers.loggedAt,
     })
@@ -131,6 +155,8 @@ export async function readMasjidEntries(since: string): Promise<MasjidEntry[]> {
     prayerDate: row.prayerDate,
     prayer: row.prayer as DailyPrayerKey,
     status: row.status as MasjidStatus,
+    timing: row.timing as MasjidTiming | null,
+    joinedRakah: row.joinedRakah,
     reason: row.reason,
     loggedAt: row.loggedAt.toISOString(),
   }));

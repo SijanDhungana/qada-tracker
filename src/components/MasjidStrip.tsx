@@ -6,12 +6,18 @@ import { BASE_PRAYERS, PRAYER_LABELS, type DailyPrayerKey } from "@/lib/prayers"
 import {
   MASJID_STATUSES,
   STATUS_SHORT,
+  TIMING_LABELS,
+  describeRakah,
   type MasjidEntry,
   type MasjidStatus,
 } from "@/lib/masjid";
 import { formatTimeInZone } from "@/lib/time";
 import { clearMasjidPrayer, recordMasjidPrayer } from "@/lib/actions/masjid";
-import { MasjidEditorSheet, type EditorTarget } from "./MasjidEditorSheet";
+import {
+  MasjidEditorSheet,
+  type EditorSave,
+  type EditorTarget,
+} from "./MasjidEditorSheet";
 import { useToast } from "./ui/Toast";
 
 const STATUS_STYLES: Record<MasjidStatus, string> = {
@@ -41,16 +47,15 @@ export function MasjidStrip({
   const [target, setTarget] = useState<EditorTarget | null>(null);
   const [pending, startTransition] = useTransition();
 
-  function save(
-    prayer: DailyPrayerKey,
-    status: MasjidStatus,
-    reason: string | null,
-  ) {
+  function save(prayer: DailyPrayerKey, value: EditorSave) {
+    const { status, timing, joinedRakah, reason } = value;
     const previous = entries[prayer];
     const optimistic: MasjidEntry = {
       prayerDate: today,
       prayer,
       status,
+      timing,
+      joinedRakah,
       reason,
       loggedAt: new Date().toISOString(),
     };
@@ -61,6 +66,8 @@ export function MasjidStrip({
         prayerDate: today,
         prayer,
         status,
+        timing,
+        joinedRakah,
         reason,
       }).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
 
@@ -75,8 +82,13 @@ export function MasjidStrip({
         return;
       }
 
+      const summary =
+        status === "masjid" && timing
+          ? `${STATUS_SHORT[status].toLowerCase()}, ${TIMING_LABELS[timing].toLowerCase()}`
+          : STATUS_SHORT[status].toLowerCase();
+
       toast({
-        message: `${PRAYER_LABELS[prayer]} · ${STATUS_SHORT[status].toLowerCase()}`,
+        message: `${PRAYER_LABELS[prayer]} · ${summary}`,
         coalesceKey: "masjid",
         action: {
           label: "Undo",
@@ -92,6 +104,8 @@ export function MasjidStrip({
                 prayerDate: today,
                 prayer,
                 status: previous.status,
+                timing: previous.timing,
+                joinedRakah: previous.joinedRakah,
                 reason: previous.reason,
               });
             } else {
@@ -104,16 +118,18 @@ export function MasjidStrip({
   }
 
   function choose(prayer: DailyPrayerKey, status: MasjidStatus) {
-    // At the masjid needs no explanation; anything else offers a note.
-    if (status === "masjid") save(prayer, "masjid", null);
-    else
-      setTarget({
-        dateKey: today,
-        prayer,
-        status,
-        reason: entries[prayer]?.reason ?? null,
-        askStatus: false,
-      });
+    // Every answer now opens the sheet: the masjid needs its on-time/late
+    // question, and the other two offer a note.
+    const existing = entries[prayer];
+    setTarget({
+      dateKey: today,
+      prayer,
+      status,
+      timing: existing?.status === status ? existing.timing : null,
+      joinedRakah: existing?.status === status ? existing.joinedRakah : null,
+      reason: existing?.status === status ? existing.reason : null,
+      askStatus: false,
+    });
   }
 
   const loggedCount = Object.keys(entries).length;
@@ -188,11 +204,7 @@ export function MasjidStrip({
                 </div>
               </div>
 
-              {entry?.reason ? (
-                <p className="mt-2 text-meta text-ink-3">
-                  Note: <span className="text-ink-2">{entry.reason}</span>
-                </p>
-              ) : null}
+              {entry ? <EntryDetail entry={entry} /> : null}
             </li>
           );
         })}
@@ -201,11 +213,29 @@ export function MasjidStrip({
       <MasjidEditorSheet
         target={target}
         onClose={() => setTarget(null)}
-        onSave={(status, reason) => {
-          if (target) save(target.prayer, status, reason);
+        onSave={(value) => {
+          if (target) save(target.prayer, value);
           setTarget(null);
         }}
       />
     </section>
+  );
+}
+
+/** The timing, rak'ah and note that sit under a logged row. */
+function EntryDetail({ entry }: { entry: MasjidEntry }) {
+  const parts: string[] = [];
+  if (entry.status === "masjid" && entry.timing) {
+    parts.push(TIMING_LABELS[entry.timing]);
+    const rakah = describeRakah(entry.joinedRakah);
+    if (rakah) parts.push(rakah);
+  }
+  if (entry.reason) parts.push(entry.reason);
+  if (parts.length === 0) return null;
+
+  return (
+    <p className="mt-2 text-meta text-ink-3">
+      <span className="text-ink-2">{parts.join(" · ")}</span>
+    </p>
   );
 }

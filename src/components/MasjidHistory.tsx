@@ -6,15 +6,30 @@ import { useRouter } from "next/navigation";
 import { BASE_PRAYERS, PRAYER_LABELS, type DailyPrayerKey } from "@/lib/prayers";
 import {
   STATUS_SHORT,
+  TIMING_LABELS,
+  describeRakah,
   hardestPrayer,
   summarise,
   topReasons,
   type MasjidEntry,
   type MasjidStatus,
 } from "@/lib/masjid";
+import {
+  TAHAJJUD_LABELS,
+  TAHAJJUD_SHORT,
+  TAHAJJUD_STATUSES,
+  summariseTahajjud,
+  type TahajjudEntry,
+  type TahajjudStatus,
+} from "@/lib/tahajjud";
 import { formatDateKey, shiftDateKey } from "@/lib/time";
 import { clearMasjidPrayer, recordMasjidPrayer } from "@/lib/actions/masjid";
-import { MasjidEditorSheet, type EditorTarget } from "./MasjidEditorSheet";
+import { clearTahajjud, recordTahajjud } from "@/lib/actions/tahajjud";
+import {
+  MasjidEditorSheet,
+  type EditorSave,
+  type EditorTarget,
+} from "./MasjidEditorSheet";
 import { SegmentedControl } from "./ui/SegmentedControl";
 import { useToast } from "./ui/Toast";
 
@@ -30,11 +45,21 @@ function keyOf(entry: { prayerDate: string; prayer: string }) {
   return `${entry.prayerDate}:${entry.prayer}`;
 }
 
+const TAHAJJUD_DOT: Record<TahajjudStatus, string> = {
+  prayed: "bg-done text-done-ink",
+  woke: "bg-done-2 text-done-ink",
+  slept: "bg-surface-3 text-ink-2",
+};
+
 export function MasjidHistory({
   entries: initialEntries,
+  tahajjud: initialTahajjud,
+  trackTahajjud,
   today,
 }: {
   entries: MasjidEntry[];
+  tahajjud: TahajjudEntry[];
+  trackTahajjud: boolean;
   today: string;
 }) {
   const router = useRouter();
@@ -42,6 +67,9 @@ export function MasjidHistory({
   const [range, setRange] = useState<Range>("30");
   const [entries, setEntries] = useState<Record<string, MasjidEntry>>(() =>
     Object.fromEntries(initialEntries.map((entry) => [keyOf(entry), entry])),
+  );
+  const [nights, setNights] = useState<Record<string, TahajjudEntry>>(() =>
+    Object.fromEntries(initialTahajjud.map((entry) => [entry.prayerDate, entry])),
   );
   const [target, setTarget] = useState<EditorTarget | null>(null);
   const [, startTransition] = useTransition();
@@ -63,18 +91,16 @@ export function MasjidHistory({
     return list;
   }, [today, range]);
 
-  function save(
-    dateKey: string,
-    prayer: DailyPrayerKey,
-    status: MasjidStatus,
-    reason: string | null,
-  ) {
+  function save(dateKey: string, prayer: DailyPrayerKey, value: EditorSave) {
+    const { status, timing, joinedRakah, reason } = value;
     const id = `${dateKey}:${prayer}`;
     const previous = entries[id];
     const optimistic: MasjidEntry = {
       prayerDate: dateKey,
       prayer,
       status,
+      timing,
+      joinedRakah,
       reason,
       loggedAt: new Date().toISOString(),
     };
@@ -85,6 +111,8 @@ export function MasjidHistory({
         prayerDate: dateKey,
         prayer,
         status,
+        timing,
+        joinedRakah,
         reason,
       }).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
 
@@ -115,6 +143,8 @@ export function MasjidHistory({
                 prayerDate: dateKey,
                 prayer,
                 status: previous.status,
+                timing: previous.timing,
+                joinedRakah: previous.joinedRakah,
                 reason: previous.reason,
               });
             } else {
@@ -153,7 +183,49 @@ export function MasjidHistory({
     });
   }
 
+  function saveNight(dateKey: string, status: TahajjudStatus) {
+    const previous = nights[dateKey];
+    const clearing = previous?.status === status;
+
+    setNights((current) => {
+      const next = { ...current };
+      if (clearing) delete next[dateKey];
+      else
+        next[dateKey] = {
+          prayerDate: dateKey,
+          status,
+          loggedAt: new Date().toISOString(),
+        };
+      return next;
+    });
+
+    startTransition(async () => {
+      const result = await (clearing
+        ? clearTahajjud(dateKey)
+        : recordTahajjud(dateKey, status)
+      ).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
+
+      if (!result.ok) {
+        setNights((current) => {
+          const next = { ...current };
+          if (previous) next[dateKey] = previous;
+          else delete next[dateKey];
+          return next;
+        });
+        toast({ message: result.error, tone: "danger" });
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  const scopedNights = useMemo(
+    () => Object.values(nights).filter((night) => night.prayerDate >= cutoff),
+    [nights, cutoff],
+  );
+
   const summary = summarise(scoped);
+  const nightSummary = summariseTahajjud(scopedNights);
   const reasons = topReasons(scoped);
   const hardest = hardestPrayer(scoped);
   const masjidShare =
@@ -247,6 +319,28 @@ export function MasjidHistory({
             </section>
 
             <section className="rounded-lg border border-line bg-surface p-5">
+              <h2 className="text-body font-medium text-ink">Caught from the start</h2>
+              {summary.onTime + summary.late > 0 ? (
+                <>
+                  <p className="num mt-2 text-counter leading-none text-done">
+                    {Math.round(
+                      (summary.onTime / (summary.onTime + summary.late)) * 100,
+                    )}
+                    %
+                  </p>
+                  <p className="mt-1 text-meta text-ink-3">
+                    <span className="num">{summary.onTime}</span> on time ·{" "}
+                    <span className="num">{summary.late}</span> late
+                  </p>
+                </>
+              ) : (
+                <p className="mt-2 text-meta text-ink-3">
+                  No masjid prayers logged with a timing yet.
+                </p>
+              )}
+            </section>
+
+            <section className="rounded-lg border border-line bg-surface p-5">
               <h2 className="text-body font-medium text-ink">Hardest to make</h2>
               {hardest ? (
                 <>
@@ -266,6 +360,20 @@ export function MasjidHistory({
               )}
             </section>
           </div>
+
+          {trackTahajjud && nightSummary.logged > 0 ? (
+            <section className="rounded-lg border border-line bg-surface p-5">
+              <h2 className="text-body font-medium text-ink">Tahajjud</h2>
+              <p className="num mt-2 text-counter leading-none text-ink">
+                {nightSummary.prayed}
+              </p>
+              <p className="mt-1 text-meta text-ink-3">
+                {nightSummary.prayed === 1 ? "night" : "nights"} prayed, of{" "}
+                <span className="num">{nightSummary.logged}</span> logged ·{" "}
+                <span className="num">{nightSummary.woke}</span> woke without praying
+              </p>
+            </section>
+          ) : null}
 
           {reasons.length > 0 ? (
             <section className="rounded-lg border border-line bg-surface p-5">
@@ -310,9 +418,18 @@ export function MasjidHistory({
             const dayEntries = BASE_PRAYERS.map(
               (prayer) => entries[`${dateKey}:${prayer}`],
             ).filter(Boolean);
-            const notes = dayEntries.filter(
-              (entry) => entry.status !== "masjid" && entry.reason,
-            );
+            const details = dayEntries
+              .map((entry) => {
+                const parts: string[] = [];
+                if (entry.status === "masjid" && entry.timing) {
+                  parts.push(TIMING_LABELS[entry.timing]);
+                  const rakah = describeRakah(entry.joinedRakah);
+                  if (rakah) parts.push(rakah);
+                }
+                if (entry.reason) parts.push(entry.reason);
+                return { prayer: entry.prayer, text: parts.join(" · ") };
+              })
+              .filter((detail) => detail.text.length > 0);
 
             return (
               <li
@@ -336,6 +453,8 @@ export function MasjidHistory({
                               dateKey,
                               prayer,
                               status: entry?.status,
+                              timing: entry?.timing ?? null,
+                              joinedRakah: entry?.joinedRakah ?? null,
                               reason: entry?.reason ?? null,
                               askStatus: true,
                             })
@@ -358,15 +477,45 @@ export function MasjidHistory({
                   </div>
                 </div>
 
-                {notes.length > 0 ? (
+                {details.length > 0 ? (
                   <ul className="mt-2 flex flex-col gap-1">
-                    {notes.map((note) => (
-                      <li key={note.prayer} className="text-meta text-ink-3">
-                        {PRAYER_LABELS[note.prayer]} ·{" "}
-                        <span className="text-ink-2">{note.reason}</span>
+                    {details.map((detail) => (
+                      <li key={detail.prayer} className="text-meta text-ink-3">
+                        {PRAYER_LABELS[detail.prayer]} ·{" "}
+                        <span className="text-ink-2">{detail.text}</span>
                       </li>
                     ))}
                   </ul>
+                ) : null}
+
+                {trackTahajjud ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+                    <p className="text-meta text-ink-3">Tahajjud</p>
+                    <div
+                      role="group"
+                      aria-label={`Tahajjud on ${formatDateKey(dateKey, false)}`}
+                      className="flex gap-1.5"
+                    >
+                      {TAHAJJUD_STATUSES.map((status) => {
+                        const selected = nights[dateKey]?.status === status;
+                        return (
+                          <button
+                            key={status}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => saveNight(dateKey, status)}
+                            className={`min-h-11 rounded-md border px-3 text-meta font-medium transition-colors ${
+                              selected
+                                ? `${TAHAJJUD_DOT[status]} border-transparent`
+                                : "border-line bg-surface text-ink-3 hover:bg-surface-2 hover:text-ink-2"
+                            }`}
+                          >
+                            {TAHAJJUD_SHORT[status]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 ) : null}
               </li>
             );
@@ -377,8 +526,8 @@ export function MasjidHistory({
       <MasjidEditorSheet
         target={target}
         onClose={() => setTarget(null)}
-        onSave={(status, reason) => {
-          if (target) save(target.dateKey, target.prayer, status, reason);
+        onSave={(value) => {
+          if (target) save(target.dateKey, target.prayer, value);
           setTarget(null);
         }}
         onClear={() => {

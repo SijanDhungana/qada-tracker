@@ -38,6 +38,22 @@ export async function setTrackWitr(value: boolean): Promise<SettingsResult> {
   return { ok: true };
 }
 
+export async function setTrackTahajjud(value: boolean): Promise<SettingsResult> {
+  const user = await requireUser();
+  try {
+    await db
+      .update(users)
+      .set({ trackTahajjud: value })
+      .where(eq(users.id, user.id));
+  } catch {
+    return { ok: false, error: "Couldn't save that setting. Please try again." };
+  }
+  revalidatePath("/");
+  revalidatePath("/masjid");
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
 export async function setDailyGoal(value: number): Promise<SettingsResult> {
   const user = await requireUser();
   try {

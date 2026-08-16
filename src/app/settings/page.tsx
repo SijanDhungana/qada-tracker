@@ -33,6 +33,7 @@ export default async function SettingsPage() {
       <SettingsScreen
         username={user.username}
         trackWitr={user.trackWitr}
+        trackTahajjud={user.trackTahajjud}
         dailyGoal={user.dailyGoal}
         theme={user.theme}
         timezone={user.timezone}

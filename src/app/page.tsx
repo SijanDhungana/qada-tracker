@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation";
 import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { masjidPrayers, prayerDays } from "@/db/schema";
+import { masjidPrayers, prayerDays, tahajjudNights } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import { ALL_PRAYERS, prayersFor, type PrayerKey } from "@/lib/prayers";
 import type { DailyPrayerKey } from "@/lib/prayers";
-import type { MasjidEntry, MasjidStatus } from "@/lib/masjid";
+import type { MasjidEntry, MasjidStatus, MasjidTiming } from "@/lib/masjid";
+import type { TahajjudEntry, TahajjudStatus } from "@/lib/tahajjud";
 import { startOfTodayInZone, todayKeyInZone } from "@/lib/time";
 import { AppShell } from "@/components/AppShell";
 import { TodayScreen, type RecentLog, type TodayData } from "@/components/TodayScreen";
@@ -69,7 +70,7 @@ export default async function TodayPage() {
   const todayKey = todayKeyInZone(user.timezone);
   const dayStartIso = startOfTodayInZone(user.timezone).toISOString();
 
-  const [gridRows, targetRow, recentRows, masjidRows] = await Promise.all([
+  const [gridRows, targetRow, recentRows, masjidRows, tahajjudRows] = await Promise.all([
     db
       .select({
         id: prayerDays.id,
@@ -117,6 +118,8 @@ export default async function TodayPage() {
         prayerDate: masjidPrayers.prayerDate,
         prayer: masjidPrayers.prayer,
         status: masjidPrayers.status,
+        timing: masjidPrayers.timing,
+        joinedRakah: masjidPrayers.joinedRakah,
         reason: masjidPrayers.reason,
         loggedAt: masjidPrayers.loggedAt,
       })
@@ -127,6 +130,21 @@ export default async function TodayPage() {
           gte(masjidPrayers.prayerDate, todayKey),
         ),
       ),
+
+    db
+      .select({
+        prayerDate: tahajjudNights.prayerDate,
+        status: tahajjudNights.status,
+        loggedAt: tahajjudNights.loggedAt,
+      })
+      .from(tahajjudNights)
+      .where(
+        and(
+          eq(tahajjudNights.userId, user.id),
+          gte(tahajjudNights.prayerDate, todayKey),
+        ),
+      )
+      .limit(1),
   ]);
 
   const perDay = counted.length;
@@ -150,9 +168,19 @@ export default async function TodayPage() {
     prayerDate: row.prayerDate,
     prayer: row.prayer as DailyPrayerKey,
     status: row.status as MasjidStatus,
+    timing: row.timing as MasjidTiming | null,
+    joinedRakah: row.joinedRakah,
     reason: row.reason,
     loggedAt: row.loggedAt.toISOString(),
   }));
+
+  const tahajjudToday: TahajjudEntry | null = tahajjudRows[0]
+    ? {
+        prayerDate: tahajjudRows[0].prayerDate,
+        status: tahajjudRows[0].status as TahajjudStatus,
+        loggedAt: tahajjudRows[0].loggedAt.toISOString(),
+      }
+    : null;
 
   const data: TodayData = {
     trackWitr: user.trackWitr,
@@ -170,6 +198,8 @@ export default async function TodayPage() {
     timezone: user.timezone,
     dayStartIso,
     masjidToday,
+    trackTahajjud: user.trackTahajjud,
+    tahajjudToday,
   };
 
   return (

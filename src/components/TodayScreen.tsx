@@ -6,10 +6,12 @@ import { useRouter } from "next/navigation";
 import { PRAYER_LABELS, prayersFor, type PrayerKey } from "@/lib/prayers";
 import { milestone, projectionSentence } from "@/lib/projection";
 import type { MasjidEntry } from "@/lib/masjid";
+import type { TahajjudEntry } from "@/lib/tahajjud";
 import { logPrayer, undoSlot, unlogLatest } from "@/lib/actions/log";
 import { PrayerCounter } from "./PrayerCounter";
 import { LedgerGrid, type GridDay } from "./LedgerGrid";
 import { MasjidStrip } from "./MasjidStrip";
+import { TahajjudStrip } from "./TahajjudStrip";
 import { Sheet } from "./ui/Sheet";
 import { useToast } from "./ui/Toast";
 import { dayLabel } from "@/lib/prayers";
@@ -40,6 +42,8 @@ export type TodayData = {
   /** Midnight in the account's timezone, as an instant. */
   dayStartIso: string;
   masjidToday: MasjidEntry[];
+  trackTahajjud: boolean;
+  tahajjudToday: TahajjudEntry | null;
 };
 
 export function TodayScreen({ data }: { data: TodayData }) {
@@ -314,6 +318,14 @@ export function TodayScreen({ data }: { data: TodayData }) {
         timezone={data.timezone}
         initialEntries={data.masjidToday}
       />
+
+      {data.trackTahajjud ? (
+        <TahajjudStrip
+          today={data.today}
+          timezone={data.timezone}
+          initialEntry={data.tahajjudToday}
+        />
+      ) : null}
 
       {/* 5. The ledger grid. */}
       <section aria-labelledby="grid-heading" className="flex flex-col gap-3">
