@@ -23,6 +23,10 @@ export const users = pgTable("users", {
   timezone: text("timezone").notNull().default("America/Toronto"),
   /** Opt-in: adds the night prayer to the Today screen and its history. */
   trackTahajjud: boolean("track_tahajjud").notNull().default(false),
+  /** Also ask how many rak'ahs of tahajjud were prayed. */
+  trackTahajjudRakahs: boolean("track_tahajjud_rakahs").notNull().default(false),
+  /** Opt-in: a sunnah marker beside each of the five daily prayers. */
+  trackSunnah: boolean("track_sunnah").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -116,6 +120,8 @@ export const tahajjudNights = pgTable(
     prayerDate: date("prayer_date").notNull(),
     /** prayed | woke | slept */
     status: text("status").notNull(),
+    /** Only recorded when the user opts in, and only when status is "prayed". */
+    rakahs: integer("rakahs"),
     loggedAt: timestamp("logged_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -125,7 +131,91 @@ export const tahajjudNights = pgTable(
   ],
 );
 
+/**
+ * Today's witr, kept apart from the qada witr slot. The backlog asks "have you
+ * made up that night's witr"; this asks "did you pray witr last night", and
+ * missing it leaves the door open to making it up.
+ */
+export const dailyWitr = pgTable(
+  "daily_witr",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    prayerDate: date("prayer_date").notNull(),
+    /** prayed | missed */
+    status: text("status").notNull(),
+    /** Missed at its time, but made up afterwards. */
+    remade: boolean("remade").notNull().default(false),
+    loggedAt: timestamp("logged_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("daily_witr_user_date_key").on(table.userId, table.prayerDate),
+  ],
+);
+
+/** Whether the sunnah attached to each fard prayer was prayed. */
+export const sunnahLog = pgTable(
+  "sunnah_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    prayerDate: date("prayer_date").notNull(),
+    /** fajr | zuhr | asr | maghrib | isha */
+    prayer: text("prayer").notNull(),
+    prayed: boolean("prayed").notNull(),
+    loggedAt: timestamp("logged_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("sunnah_log_user_date_prayer_key").on(
+      table.userId,
+      table.prayerDate,
+      table.prayer,
+    ),
+  ],
+);
+
+/**
+ * A running tally per kind per day — dhikr, nafl rak'ahs, Qur'an read. One row
+ * per kind rather than one per tap, so a hundred taps is a hundred cheap
+ * increments of a single row instead of a hundred inserts.
+ */
+export const worshipLog = pgTable(
+  "worship_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    prayerDate: date("prayer_date").notNull(),
+    /** See WORSHIP_KINDS in lib/worship.ts */
+    kind: text("kind").notNull(),
+    count: integer("count").notNull().default(0),
+    loggedAt: timestamp("logged_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("worship_log_user_date_idx").on(table.userId, table.prayerDate),
+    unique("worship_log_user_date_kind_key").on(
+      table.userId,
+      table.prayerDate,
+      table.kind,
+    ),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type PrayerDay = typeof prayerDays.$inferSelect;
 export type MasjidPrayer = typeof masjidPrayers.$inferSelect;
 export type TahajjudNight = typeof tahajjudNights.$inferSelect;
+export type DailyWitr = typeof dailyWitr.$inferSelect;
+export type SunnahRow = typeof sunnahLog.$inferSelect;
+export type WorshipRow = typeof worshipLog.$inferSelect;

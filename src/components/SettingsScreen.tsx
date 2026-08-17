@@ -14,9 +14,12 @@ import {
   setDailyGoal,
   setTheme,
   setTimezone,
+  setTrackSunnah,
   setTrackTahajjud,
+  setTrackTahajjudRakahs,
   setTrackWitr,
   type RemoveDirection,
+  type SettingsResult,
 } from "@/lib/actions/settings";
 import { DayInputForm } from "./DayInputForm";
 import { Sheet } from "./ui/Sheet";
@@ -46,6 +49,56 @@ function Row({ children }: { children: React.ReactNode }) {
   return <div className="px-4 py-4">{children}</div>;
 }
 
+/** An on/off setting with its explanation underneath. */
+function ToggleRow({
+  label,
+  summary,
+  note,
+  checked,
+  onChange,
+  indented = false,
+}: {
+  label: string;
+  summary: string;
+  note?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  /** Marks a setting that only matters while its parent setting is on. */
+  indented?: boolean;
+}) {
+  return (
+    <Row>
+      <div className={indented ? "border-l-2 border-line pl-3" : undefined}>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          onClick={() => onChange(!checked)}
+          className="flex w-full items-center justify-between gap-4 text-left"
+        >
+          <span>
+            <span className="block text-body font-medium text-ink">{label}</span>
+            <span className="mt-0.5 block text-meta text-ink-3">{summary}</span>
+          </span>
+          <span
+            aria-hidden="true"
+            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+              checked ? "bg-brand" : "bg-surface-3"
+            }`}
+          >
+            <span
+              className={`absolute top-1 size-5 rounded-full bg-paper transition-all ${
+                checked ? "left-6" : "left-1"
+              }`}
+            />
+          </span>
+        </button>
+        {note ? <p className="mt-3 text-meta text-ink-3">{note}</p> : null}
+      </div>
+    </Row>
+  );
+}
+
 const inputClass =
   "min-h-12 w-full rounded-md border border-line bg-surface-2 px-3 text-body text-ink " +
   "outline-none placeholder:text-ink-3 focus:border-brand";
@@ -54,6 +107,8 @@ export function SettingsScreen({
   username,
   trackWitr,
   trackTahajjud,
+  trackTahajjudRakahs,
+  trackSunnah,
   dailyGoal,
   theme,
   timezone,
@@ -64,6 +119,8 @@ export function SettingsScreen({
   username: string;
   trackWitr: boolean;
   trackTahajjud: boolean;
+  trackTahajjudRakahs: boolean;
+  trackSunnah: boolean;
   dailyGoal: number;
   theme: string;
   timezone: string;
@@ -76,6 +133,8 @@ export function SettingsScreen({
 
   const [witr, setWitr] = useState(trackWitr);
   const [tahajjud, setTahajjud] = useState(trackTahajjud);
+  const [tahajjudRakahs, setTahajjudRakahs] = useState(trackTahajjudRakahs);
+  const [sunnah, setSunnah] = useState(trackSunnah);
   const [goal, setGoal] = useState(dailyGoal);
   const [themeValue, setThemeValue] = useState(theme);
   const [zone, setZone] = useState(timezone);
@@ -85,31 +144,24 @@ export function SettingsScreen({
   const [resetOpen, setResetOpen] = useState(false);
   const [, startTransition] = useTransition();
 
-  function saveWitr(next: boolean) {
-    setWitr(next);
+  /**
+   * Flips a switch on screen straight away, then writes it. A failed write
+   * puts the switch back where it was rather than leaving the UI claiming
+   * something the account doesn't say.
+   */
+  function saveToggle(
+    next: boolean,
+    apply: (value: boolean) => void,
+    action: (value: boolean) => Promise<SettingsResult>,
+  ) {
+    apply(next);
     startTransition(async () => {
-      const result = await setTrackWitr(next).catch(() => ({
+      const result = await action(next).catch(() => ({
         ok: false as const,
         error: "Couldn't save that setting.",
       }));
       if (!result.ok) {
-        setWitr(!next);
-        toast({ message: result.error, tone: "danger" });
-        return;
-      }
-      router.refresh();
-    });
-  }
-
-  function saveTahajjud(next: boolean) {
-    setTahajjud(next);
-    startTransition(async () => {
-      const result = await setTrackTahajjud(next).catch(() => ({
-        ok: false as const,
-        error: "Couldn't save that setting.",
-      }));
-      if (!result.ok) {
-        setTahajjud(!next);
+        apply(!next);
         toast({ message: result.error, tone: "danger" });
         return;
       }
@@ -226,72 +278,39 @@ export function SettingsScreen({
       </Group>
 
       <Group title="Prayers">
-        <Row>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={witr}
-            onClick={() => saveWitr(!witr)}
-            className="flex w-full items-center justify-between gap-4 text-left"
-          >
-            <span>
-              <span className="block text-body font-medium text-ink">Track Witr</span>
-              <span className="mt-0.5 block text-meta text-ink-3">
-                Adds Witr as a 6th prayer on every day.
-              </span>
-            </span>
-            <span
-              aria-hidden="true"
-              className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
-                witr ? "bg-brand" : "bg-surface-3"
-              }`}
-            >
-              <span
-                className={`absolute top-1 size-5 rounded-full bg-paper transition-all ${
-                  witr ? "left-6" : "left-1"
-                }`}
-              />
-            </span>
-          </button>
-          <p className="mt-3 text-meta text-ink-3">
-            Turning this off just hides Witr — any Witr you&apos;ve already checked
-            off is kept and comes back if you turn it on again.
-          </p>
-        </Row>
-        <Row>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={tahajjud}
-            onClick={() => saveTahajjud(!tahajjud)}
-            className="flex w-full items-center justify-between gap-4 text-left"
-          >
-            <span>
-              <span className="block text-body font-medium text-ink">
-                Track Tahajjud
-              </span>
-              <span className="mt-0.5 block text-meta text-ink-3">
-                Adds the night prayer to Today and its own history.
-              </span>
-            </span>
-            <span
-              aria-hidden="true"
-              className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
-                tahajjud ? "bg-brand" : "bg-surface-3"
-              }`}
-            >
-              <span
-                className={`absolute top-1 size-5 rounded-full bg-paper transition-all ${
-                  tahajjud ? "left-6" : "left-1"
-                }`}
-              />
-            </span>
-          </button>
-          <p className="mt-3 text-meta text-ink-3">
-            Recorded as prayed, woke without praying, or slept through — separate
-            from the qada count, and never part of it.
-          </p>
-        </Row>
+        <ToggleRow
+          label="Track Witr"
+          summary="Adds Witr to the qada ledger and to tonight's log."
+          note="Turning this off just hides Witr — any Witr you've already checked off is kept and comes back if you turn it on again."
+          checked={witr}
+          onChange={(next) => saveToggle(next, setWitr, setTrackWitr)}
+        />
+        <ToggleRow
+          label="Track sunnah prayers"
+          summary="A prayed-or-missed marker beside each of the five daily prayers."
+          note="Separate from the qada count. The app only records whether you prayed yours — it doesn't say how many rak'ahs that is."
+          checked={sunnah}
+          onChange={(next) => saveToggle(next, setSunnah, setTrackSunnah)}
+        />
+        <ToggleRow
+          label="Track Tahajjud"
+          summary="Adds the night prayer to Today and its own history."
+          note="Recorded as prayed, woke without praying, or slept through — separate from the qada count, and never part of it."
+          checked={tahajjud}
+          onChange={(next) => saveToggle(next, setTahajjud, setTrackTahajjud)}
+        />
+        {tahajjud ? (
+          <ToggleRow
+            indented
+            label="Count Tahajjud rak'ahs"
+            summary="Also asks how many rak'ahs you prayed."
+            note="Only asked on the nights you prayed. Turning it off keeps the counts already recorded."
+            checked={tahajjudRakahs}
+            onChange={(next) =>
+              saveToggle(next, setTahajjudRakahs, setTrackTahajjudRakahs)
+            }
+          />
+        ) : null}
       </Group>
 
       <Group title="Your days">

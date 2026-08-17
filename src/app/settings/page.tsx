@@ -34,6 +34,8 @@ export default async function SettingsPage() {
         username={user.username}
         trackWitr={user.trackWitr}
         trackTahajjud={user.trackTahajjud}
+        trackTahajjudRakahs={user.trackTahajjudRakahs}
+        trackSunnah={user.trackSunnah}
         dailyGoal={user.dailyGoal}
         theme={user.theme}
         timezone={user.timezone}

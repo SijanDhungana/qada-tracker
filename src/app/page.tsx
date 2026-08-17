@@ -1,12 +1,22 @@
 import { redirect } from "next/navigation";
 import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { masjidPrayers, prayerDays, tahajjudNights } from "@/db/schema";
+import {
+  dailyWitr,
+  masjidPrayers,
+  prayerDays,
+  sunnahLog,
+  tahajjudNights,
+  worshipLog,
+} from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import { ALL_PRAYERS, prayersFor, type PrayerKey } from "@/lib/prayers";
 import type { DailyPrayerKey } from "@/lib/prayers";
 import type { MasjidEntry, MasjidStatus, MasjidTiming } from "@/lib/masjid";
+import type { SunnahEntry } from "@/lib/sunnah";
 import type { TahajjudEntry, TahajjudStatus } from "@/lib/tahajjud";
+import type { WitrEntry, WitrStatus } from "@/lib/witr";
+import type { WorshipCounts, WorshipKind } from "@/lib/worship";
 import { startOfTodayInZone, todayKeyInZone } from "@/lib/time";
 import { AppShell } from "@/components/AppShell";
 import { TodayScreen, type RecentLog, type TodayData } from "@/components/TodayScreen";
@@ -70,7 +80,16 @@ export default async function TodayPage() {
   const todayKey = todayKeyInZone(user.timezone);
   const dayStartIso = startOfTodayInZone(user.timezone).toISOString();
 
-  const [gridRows, targetRow, recentRows, masjidRows, tahajjudRows] = await Promise.all([
+  const [
+    gridRows,
+    targetRow,
+    recentRows,
+    masjidRows,
+    tahajjudRows,
+    witrRows,
+    sunnahRows,
+    worshipRows,
+  ] = await Promise.all([
     db
       .select({
         id: prayerDays.id,
@@ -135,6 +154,7 @@ export default async function TodayPage() {
       .select({
         prayerDate: tahajjudNights.prayerDate,
         status: tahajjudNights.status,
+        rakahs: tahajjudNights.rakahs,
         loggedAt: tahajjudNights.loggedAt,
       })
       .from(tahajjudNights)
@@ -145,6 +165,34 @@ export default async function TodayPage() {
         ),
       )
       .limit(1),
+
+    db
+      .select({
+        prayerDate: dailyWitr.prayerDate,
+        status: dailyWitr.status,
+        remade: dailyWitr.remade,
+        loggedAt: dailyWitr.loggedAt,
+      })
+      .from(dailyWitr)
+      .where(and(eq(dailyWitr.userId, user.id), gte(dailyWitr.prayerDate, todayKey)))
+      .limit(1),
+
+    db
+      .select({
+        prayerDate: sunnahLog.prayerDate,
+        prayer: sunnahLog.prayer,
+        prayed: sunnahLog.prayed,
+        loggedAt: sunnahLog.loggedAt,
+      })
+      .from(sunnahLog)
+      .where(and(eq(sunnahLog.userId, user.id), gte(sunnahLog.prayerDate, todayKey))),
+
+    db
+      .select({ kind: worshipLog.kind, count: worshipLog.count })
+      .from(worshipLog)
+      .where(
+        and(eq(worshipLog.userId, user.id), gte(worshipLog.prayerDate, todayKey)),
+      ),
   ]);
 
   const perDay = counted.length;
@@ -178,9 +226,31 @@ export default async function TodayPage() {
     ? {
         prayerDate: tahajjudRows[0].prayerDate,
         status: tahajjudRows[0].status as TahajjudStatus,
+        rakahs: tahajjudRows[0].rakahs,
         loggedAt: tahajjudRows[0].loggedAt.toISOString(),
       }
     : null;
+
+  const witrToday: WitrEntry | null = witrRows[0]
+    ? {
+        prayerDate: witrRows[0].prayerDate,
+        status: witrRows[0].status as WitrStatus,
+        remade: witrRows[0].remade,
+        loggedAt: witrRows[0].loggedAt.toISOString(),
+      }
+    : null;
+
+  const sunnahToday: SunnahEntry[] = sunnahRows.map((row) => ({
+    prayerDate: row.prayerDate,
+    prayer: row.prayer as DailyPrayerKey,
+    prayed: row.prayed,
+    loggedAt: row.loggedAt.toISOString(),
+  }));
+
+  const worshipToday: WorshipCounts = {};
+  for (const row of worshipRows) {
+    worshipToday[row.kind as WorshipKind] = row.count;
+  }
 
   const data: TodayData = {
     trackWitr: user.trackWitr,
@@ -199,7 +269,12 @@ export default async function TodayPage() {
     dayStartIso,
     masjidToday,
     trackTahajjud: user.trackTahajjud,
+    trackTahajjudRakahs: user.trackTahajjudRakahs,
     tahajjudToday,
+    witrToday,
+    trackSunnah: user.trackSunnah,
+    sunnahToday,
+    worshipToday,
   };
 
   return (

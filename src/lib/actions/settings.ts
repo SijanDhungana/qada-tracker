@@ -54,6 +54,41 @@ export async function setTrackTahajjud(value: boolean): Promise<SettingsResult> 
   return { ok: true };
 }
 
+/**
+ * Turning the rak'ah question off leaves the counts already recorded alone —
+ * they simply stop being shown, and come back if it's turned on again.
+ */
+export async function setTrackTahajjudRakahs(
+  value: boolean,
+): Promise<SettingsResult> {
+  const user = await requireUser();
+  try {
+    await db
+      .update(users)
+      .set({ trackTahajjudRakahs: value })
+      .where(eq(users.id, user.id));
+  } catch {
+    return { ok: false, error: "Couldn't save that setting. Please try again." };
+  }
+  revalidatePath("/");
+  revalidatePath("/masjid");
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+export async function setTrackSunnah(value: boolean): Promise<SettingsResult> {
+  const user = await requireUser();
+  try {
+    await db.update(users).set({ trackSunnah: value }).where(eq(users.id, user.id));
+  } catch {
+    return { ok: false, error: "Couldn't save that setting. Please try again." };
+  }
+  revalidatePath("/");
+  revalidatePath("/masjid");
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
 export async function setDailyGoal(value: number): Promise<SettingsResult> {
   const user = await requireUser();
   try {

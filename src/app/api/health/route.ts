@@ -124,7 +124,6 @@ export async function GET() {
       const rows = await db.execute<{ table_name: string; column_name: string }>(sql`
         select table_name, column_name from information_schema.columns
         where table_schema = 'public'
-          and table_name in ('users', 'prayer_days', 'masjid_prayers')
       `);
 
       const present = new Set(
@@ -140,7 +139,16 @@ export async function GET() {
         "prayer_days.witr_at",
         "users.daily_goal",
         "users.theme",
-        "masjid_prayers.id",
+        "users.timezone",
+        "users.track_tahajjud",
+        "users.track_tahajjud_rakahs",
+        "users.track_sunnah",
+        "masjid_prayers.timing",
+        "masjid_prayers.joined_rakah",
+        "tahajjud_nights.rakahs",
+        "daily_witr.remade",
+        "sunnah_log.prayed",
+        "worship_log.count",
       ];
       const missing = required.filter((column) => !present.has(column));
 
@@ -150,7 +158,7 @@ export async function GET() {
         detail:
           missing.length === 0
             ? "All columns this version needs are present."
-            : `${missing.length} missing (e.g. ${missing[0]}). Run the newest migration — \`npm run db:migrate\`, or paste drizzle/0001_round_dorian_gray.sql into Neon's SQL Editor.`,
+            : `${missing.length} missing (e.g. ${missing[0]}). Run the newest migration — \`npm run db:migrate\`, or paste the newest file in drizzle/ into Neon's SQL Editor.`,
       });
     } catch (error) {
       checks.push({

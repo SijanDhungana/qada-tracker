@@ -1,10 +1,12 @@
 import { and, desc, eq, gte } from "drizzle-orm";
 import { db } from "@/db";
-import { masjidPrayers, tahajjudNights } from "@/db/schema";
+import { dailyWitr, masjidPrayers, sunnahLog, tahajjudNights } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import type { DailyPrayerKey } from "@/lib/prayers";
 import type { MasjidEntry, MasjidStatus, MasjidTiming } from "@/lib/masjid";
+import type { SunnahEntry } from "@/lib/sunnah";
 import type { TahajjudEntry, TahajjudStatus } from "@/lib/tahajjud";
+import type { WitrEntry, WitrStatus } from "@/lib/witr";
 import { shiftDateKey, todayKeyInZone } from "@/lib/time";
 import { AppShell } from "@/components/AppShell";
 import { MasjidHistory } from "@/components/MasjidHistory";
@@ -19,7 +21,7 @@ export default async function MasjidPage() {
   const todayKey = todayKeyInZone(user.timezone);
   const cutoff = shiftDateKey(todayKey, -89);
 
-  const [rows, tahajjudRows] = await Promise.all([
+  const [rows, tahajjudRows, witrRows, sunnahRows] = await Promise.all([
     db
       .select({
         prayerDate: masjidPrayers.prayerDate,
@@ -43,6 +45,7 @@ export default async function MasjidPage() {
       .select({
         prayerDate: tahajjudNights.prayerDate,
         status: tahajjudNights.status,
+        rakahs: tahajjudNights.rakahs,
         loggedAt: tahajjudNights.loggedAt,
       })
       .from(tahajjudNights)
@@ -53,6 +56,28 @@ export default async function MasjidPage() {
         ),
       )
       .orderBy(desc(tahajjudNights.prayerDate)),
+
+    db
+      .select({
+        prayerDate: dailyWitr.prayerDate,
+        status: dailyWitr.status,
+        remade: dailyWitr.remade,
+        loggedAt: dailyWitr.loggedAt,
+      })
+      .from(dailyWitr)
+      .where(and(eq(dailyWitr.userId, user.id), gte(dailyWitr.prayerDate, cutoff)))
+      .orderBy(desc(dailyWitr.prayerDate)),
+
+    db
+      .select({
+        prayerDate: sunnahLog.prayerDate,
+        prayer: sunnahLog.prayer,
+        prayed: sunnahLog.prayed,
+        loggedAt: sunnahLog.loggedAt,
+      })
+      .from(sunnahLog)
+      .where(and(eq(sunnahLog.userId, user.id), gte(sunnahLog.prayerDate, cutoff)))
+      .orderBy(desc(sunnahLog.prayerDate)),
   ]);
 
   const entries: MasjidEntry[] = rows.map((row) => ({
@@ -68,6 +93,21 @@ export default async function MasjidPage() {
   const tahajjud: TahajjudEntry[] = tahajjudRows.map((row) => ({
     prayerDate: row.prayerDate,
     status: row.status as TahajjudStatus,
+    rakahs: row.rakahs,
+    loggedAt: row.loggedAt.toISOString(),
+  }));
+
+  const witr: WitrEntry[] = witrRows.map((row) => ({
+    prayerDate: row.prayerDate,
+    status: row.status as WitrStatus,
+    remade: row.remade,
+    loggedAt: row.loggedAt.toISOString(),
+  }));
+
+  const sunnah: SunnahEntry[] = sunnahRows.map((row) => ({
+    prayerDate: row.prayerDate,
+    prayer: row.prayer as DailyPrayerKey,
+    prayed: row.prayed,
     loggedAt: row.loggedAt.toISOString(),
   }));
 
@@ -76,7 +116,12 @@ export default async function MasjidPage() {
       <MasjidHistory
         entries={entries}
         tahajjud={tahajjud}
+        witr={witr}
+        sunnah={sunnah}
         trackTahajjud={user.trackTahajjud}
+        trackTahajjudRakahs={user.trackTahajjudRakahs}
+        trackWitr={user.trackWitr}
+        trackSunnah={user.trackSunnah}
         today={todayKey}
       />
     </AppShell>

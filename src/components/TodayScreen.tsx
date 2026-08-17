@@ -6,12 +6,16 @@ import { useRouter } from "next/navigation";
 import { PRAYER_LABELS, prayersFor, type PrayerKey } from "@/lib/prayers";
 import { milestone, projectionSentence } from "@/lib/projection";
 import type { MasjidEntry } from "@/lib/masjid";
+import type { SunnahEntry } from "@/lib/sunnah";
 import type { TahajjudEntry } from "@/lib/tahajjud";
+import type { WitrEntry } from "@/lib/witr";
+import type { WorshipCounts } from "@/lib/worship";
 import { logPrayer, undoSlot, unlogLatest } from "@/lib/actions/log";
 import { PrayerCounter } from "./PrayerCounter";
 import { LedgerGrid, type GridDay } from "./LedgerGrid";
 import { MasjidStrip } from "./MasjidStrip";
-import { TahajjudStrip } from "./TahajjudStrip";
+import { NightStrip } from "./NightStrip";
+import { WorshipCard } from "./WorshipCard";
 import { Sheet } from "./ui/Sheet";
 import { useToast } from "./ui/Toast";
 import { dayLabel } from "@/lib/prayers";
@@ -43,7 +47,12 @@ export type TodayData = {
   dayStartIso: string;
   masjidToday: MasjidEntry[];
   trackTahajjud: boolean;
+  trackTahajjudRakahs: boolean;
   tahajjudToday: TahajjudEntry | null;
+  witrToday: WitrEntry | null;
+  trackSunnah: boolean;
+  sunnahToday: SunnahEntry[];
+  worshipToday: WorshipCounts;
 };
 
 export function TodayScreen({ data }: { data: TodayData }) {
@@ -317,17 +326,25 @@ export function TodayScreen({ data }: { data: TodayData }) {
         today={data.today}
         timezone={data.timezone}
         initialEntries={data.masjidToday}
+        trackSunnah={data.trackSunnah}
+        initialSunnah={data.sunnahToday}
       />
 
-      {data.trackTahajjud ? (
-        <TahajjudStrip
-          today={data.today}
-          timezone={data.timezone}
-          initialEntry={data.tahajjudToday}
-        />
-      ) : null}
+      {/* 5. Witr and Tahajjud, each shown only if it's being tracked. */}
+      <NightStrip
+        today={data.today}
+        timezone={data.timezone}
+        trackWitr={data.trackWitr}
+        trackTahajjud={data.trackTahajjud}
+        trackTahajjudRakahs={data.trackTahajjudRakahs}
+        initialWitr={data.witrToday}
+        initialTahajjud={data.tahajjudToday}
+      />
 
-      {/* 5. The ledger grid. */}
+      {/* 6. Everything voluntary, summarised. */}
+      <WorshipCard counts={data.worshipToday} />
+
+      {/* 7. The ledger grid. */}
       <section aria-labelledby="grid-heading" className="flex flex-col gap-3">
         <div className="flex items-baseline justify-between gap-3">
           <h2 id="grid-heading" className="display text-section text-ink">

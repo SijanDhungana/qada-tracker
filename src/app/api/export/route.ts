@@ -1,6 +1,13 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { masjidPrayers, prayerDays } from "@/db/schema";
+import {
+  dailyWitr,
+  masjidPrayers,
+  prayerDays,
+  sunnahLog,
+  tahajjudNights,
+  worshipLog,
+} from "@/db/schema";
 import { requireUser } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -9,12 +16,13 @@ export const dynamic = "force-dynamic";
 /**
  * The whole account as JSON. Accounts carry no email, so this file is the only
  * way back from a forgotten password — it is deliberately complete and
- * deliberately easy to reach.
+ * deliberately easy to reach. Every table holding something the user typed or
+ * tapped belongs here; anything left out is data they cannot get back.
  */
 export async function GET() {
   const user = await requireUser();
 
-  const [days, masjid] = await Promise.all([
+  const [days, masjid, nights, witr, sunnah, worship] = await Promise.all([
     db
       .select()
       .from(prayerDays)
@@ -25,17 +33,41 @@ export async function GET() {
       .from(masjidPrayers)
       .where(eq(masjidPrayers.userId, user.id))
       .orderBy(asc(masjidPrayers.prayerDate)),
+    db
+      .select()
+      .from(tahajjudNights)
+      .where(eq(tahajjudNights.userId, user.id))
+      .orderBy(asc(tahajjudNights.prayerDate)),
+    db
+      .select()
+      .from(dailyWitr)
+      .where(eq(dailyWitr.userId, user.id))
+      .orderBy(asc(dailyWitr.prayerDate)),
+    db
+      .select()
+      .from(sunnahLog)
+      .where(eq(sunnahLog.userId, user.id))
+      .orderBy(asc(sunnahLog.prayerDate)),
+    db
+      .select()
+      .from(worshipLog)
+      .where(eq(worshipLog.userId, user.id))
+      .orderBy(asc(worshipLog.prayerDate)),
   ]);
 
   const payload = {
     format: "qada-tracker-export",
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     account: {
       username: user.username,
       trackWitr: user.trackWitr,
+      trackTahajjud: user.trackTahajjud,
+      trackTahajjudRakahs: user.trackTahajjudRakahs,
+      trackSunnah: user.trackSunnah,
       dailyGoal: user.dailyGoal,
       theme: user.theme,
+      timezone: user.timezone,
       createdAt: user.createdAt,
     },
     days: days.map((day) => ({
@@ -54,7 +86,33 @@ export async function GET() {
       date: entry.prayerDate,
       prayer: entry.prayer,
       status: entry.status,
+      timing: entry.timing,
+      joinedRakah: entry.joinedRakah,
       reason: entry.reason,
+      loggedAt: entry.loggedAt,
+    })),
+    tahajjud: nights.map((night) => ({
+      date: night.prayerDate,
+      status: night.status,
+      rakahs: night.rakahs,
+      loggedAt: night.loggedAt,
+    })),
+    witr: witr.map((entry) => ({
+      date: entry.prayerDate,
+      status: entry.status,
+      remade: entry.remade,
+      loggedAt: entry.loggedAt,
+    })),
+    sunnah: sunnah.map((entry) => ({
+      date: entry.prayerDate,
+      prayer: entry.prayer,
+      prayed: entry.prayed,
+      loggedAt: entry.loggedAt,
+    })),
+    worship: worship.map((entry) => ({
+      date: entry.prayerDate,
+      kind: entry.kind,
+      count: entry.count,
       loggedAt: entry.loggedAt,
     })),
   };

@@ -8,6 +8,7 @@ import { requireUser } from "@/lib/session";
 import { todayKeyInZone } from "@/lib/time";
 import {
   isTahajjudStatus,
+  MAX_TAHAJJUD_RAKAHS,
   type TahajjudEntry,
   type TahajjudStatus,
 } from "@/lib/tahajjud";
@@ -20,6 +21,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export async function recordTahajjud(
   prayerDate: string,
   status: TahajjudStatus,
+  rakahs: number | null = null,
 ): Promise<TahajjudResult> {
   const user = await requireUser();
 
@@ -33,13 +35,28 @@ export async function recordTahajjud(
     return { ok: false, error: "That night hasn't happened yet." };
   }
 
+  // A rak'ah count only means something on a night that was actually prayed,
+  // and only for the users who asked to be asked.
+  const counting =
+    status === "prayed" &&
+    user.trackTahajjudRakahs &&
+    Number.isInteger(rakahs) &&
+    (rakahs as number) >= 1;
+  const stored = counting ? Math.min(MAX_TAHAJJUD_RAKAHS, rakahs as number) : null;
+
   try {
     await db
       .insert(tahajjudNights)
-      .values({ userId: user.id, prayerDate, status, loggedAt: new Date() })
+      .values({
+        userId: user.id,
+        prayerDate,
+        status,
+        rakahs: stored,
+        loggedAt: new Date(),
+      })
       .onConflictDoUpdate({
         target: [tahajjudNights.userId, tahajjudNights.prayerDate],
-        set: { status, loggedAt: new Date() },
+        set: { status, rakahs: stored, loggedAt: new Date() },
       });
 
     revalidatePath("/");
@@ -81,6 +98,7 @@ export async function readTahajjud(since: string): Promise<TahajjudEntry[]> {
     .select({
       prayerDate: tahajjudNights.prayerDate,
       status: tahajjudNights.status,
+      rakahs: tahajjudNights.rakahs,
       loggedAt: tahajjudNights.loggedAt,
     })
     .from(tahajjudNights)
@@ -95,6 +113,7 @@ export async function readTahajjud(since: string): Promise<TahajjudEntry[]> {
   return rows.map((row) => ({
     prayerDate: row.prayerDate,
     status: row.status as TahajjudStatus,
+    rakahs: row.rakahs,
     loggedAt: row.loggedAt.toISOString(),
   }));
 }

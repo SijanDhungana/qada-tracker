@@ -11,6 +11,7 @@ import {
   type MasjidEntry,
   type MasjidStatus,
 } from "@/lib/masjid";
+import type { SunnahEntry } from "@/lib/sunnah";
 import { formatTimeInZone } from "@/lib/time";
 import { clearMasjidPrayer, recordMasjidPrayer } from "@/lib/actions/masjid";
 import {
@@ -18,6 +19,7 @@ import {
   type EditorSave,
   type EditorTarget,
 } from "./MasjidEditorSheet";
+import { SunnahMarker } from "./SunnahMarker";
 import { useToast } from "./ui/Toast";
 
 const STATUS_STYLES: Record<MasjidStatus, string> = {
@@ -35,10 +37,14 @@ export function MasjidStrip({
   today,
   timezone,
   initialEntries,
+  trackSunnah,
+  initialSunnah,
 }: {
   today: string;
   timezone: string;
   initialEntries: MasjidEntry[];
+  trackSunnah: boolean;
+  initialSunnah: SunnahEntry[];
 }) {
   const toast = useToast();
   const [entries, setEntries] = useState<Record<string, MasjidEntry>>(() =>
@@ -205,6 +211,16 @@ export function MasjidStrip({
               </div>
 
               {entry ? <EntryDetail entry={entry} /> : null}
+
+              {trackSunnah ? (
+                <SunnahMarker
+                  dateKey={today}
+                  prayer={prayer}
+                  initial={
+                    initialSunnah.find((row) => row.prayer === prayer) ?? null
+                  }
+                />
+              ) : null}
             </li>
           );
         })}

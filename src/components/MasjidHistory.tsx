@@ -15,16 +15,28 @@ import {
   type MasjidStatus,
 } from "@/lib/masjid";
 import {
-  TAHAJJUD_LABELS,
+  DEFAULT_TAHAJJUD_RAKAHS,
+  MAX_TAHAJJUD_RAKAHS,
+  TAHAJJUD_RAKAH_STEP,
   TAHAJJUD_SHORT,
   TAHAJJUD_STATUSES,
   summariseTahajjud,
   type TahajjudEntry,
   type TahajjudStatus,
 } from "@/lib/tahajjud";
+import { summariseSunnah, type SunnahEntry } from "@/lib/sunnah";
+import {
+  WITR_LABELS,
+  WITR_STATUSES,
+  summariseWitr,
+  type WitrEntry,
+  type WitrStatus,
+} from "@/lib/witr";
 import { formatDateKey, shiftDateKey } from "@/lib/time";
 import { clearMasjidPrayer, recordMasjidPrayer } from "@/lib/actions/masjid";
 import { clearTahajjud, recordTahajjud } from "@/lib/actions/tahajjud";
+import { clearSunnah, recordSunnah } from "@/lib/actions/sunnah";
+import { clearWitr, recordWitr } from "@/lib/actions/witr";
 import {
   MasjidEditorSheet,
   type EditorSave,
@@ -54,12 +66,22 @@ const TAHAJJUD_DOT: Record<TahajjudStatus, string> = {
 export function MasjidHistory({
   entries: initialEntries,
   tahajjud: initialTahajjud,
+  witr: initialWitr,
+  sunnah: initialSunnah,
   trackTahajjud,
+  trackTahajjudRakahs,
+  trackWitr,
+  trackSunnah,
   today,
 }: {
   entries: MasjidEntry[];
   tahajjud: TahajjudEntry[];
+  witr: WitrEntry[];
+  sunnah: SunnahEntry[];
   trackTahajjud: boolean;
+  trackTahajjudRakahs: boolean;
+  trackWitr: boolean;
+  trackSunnah: boolean;
   today: string;
 }) {
   const router = useRouter();
@@ -70,6 +92,12 @@ export function MasjidHistory({
   );
   const [nights, setNights] = useState<Record<string, TahajjudEntry>>(() =>
     Object.fromEntries(initialTahajjud.map((entry) => [entry.prayerDate, entry])),
+  );
+  const [witrDays, setWitrDays] = useState<Record<string, WitrEntry>>(() =>
+    Object.fromEntries(initialWitr.map((entry) => [entry.prayerDate, entry])),
+  );
+  const [sunnahDays, setSunnahDays] = useState<Record<string, SunnahEntry>>(() =>
+    Object.fromEntries(initialSunnah.map((entry) => [keyOf(entry), entry])),
   );
   const [target, setTarget] = useState<EditorTarget | null>(null);
   const [, startTransition] = useTransition();
@@ -183,26 +211,21 @@ export function MasjidHistory({
     });
   }
 
-  function saveNight(dateKey: string, status: TahajjudStatus) {
+  /** Writes one night, or clears it when `entry` is null. */
+  function writeNight(dateKey: string, entry: TahajjudEntry | null) {
     const previous = nights[dateKey];
-    const clearing = previous?.status === status;
 
     setNights((current) => {
       const next = { ...current };
-      if (clearing) delete next[dateKey];
-      else
-        next[dateKey] = {
-          prayerDate: dateKey,
-          status,
-          loggedAt: new Date().toISOString(),
-        };
+      if (entry) next[dateKey] = entry;
+      else delete next[dateKey];
       return next;
     });
 
     startTransition(async () => {
-      const result = await (clearing
-        ? clearTahajjud(dateKey)
-        : recordTahajjud(dateKey, status)
+      const result = await (entry
+        ? recordTahajjud(dateKey, entry.status, entry.rakahs)
+        : clearTahajjud(dateKey)
       ).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
 
       if (!result.ok) {
@@ -219,13 +242,142 @@ export function MasjidHistory({
     });
   }
 
+  function saveNight(dateKey: string, status: TahajjudStatus) {
+    const previous = nights[dateKey];
+    if (previous?.status === status) {
+      writeNight(dateKey, null);
+      return;
+    }
+    writeNight(dateKey, {
+      prayerDate: dateKey,
+      status,
+      rakahs:
+        trackTahajjudRakahs && status === "prayed"
+          ? (previous?.rakahs ?? DEFAULT_TAHAJJUD_RAKAHS)
+          : null,
+      loggedAt: new Date().toISOString(),
+    });
+  }
+
+  function stepNightRakahs(dateKey: string, direction: 1 | -1) {
+    const entry = nights[dateKey];
+    if (!entry || entry.status !== "prayed") return;
+    const current = entry.rakahs ?? DEFAULT_TAHAJJUD_RAKAHS;
+    const next = Math.min(
+      MAX_TAHAJJUD_RAKAHS,
+      Math.max(TAHAJJUD_RAKAH_STEP, current + direction * TAHAJJUD_RAKAH_STEP),
+    );
+    if (next === current) return;
+    writeNight(dateKey, { ...entry, rakahs: next });
+  }
+
+  /** Writes one night's witr, or clears it when `entry` is null. */
+  function writeWitr(dateKey: string, entry: WitrEntry | null) {
+    const previous = witrDays[dateKey];
+
+    setWitrDays((current) => {
+      const next = { ...current };
+      if (entry) next[dateKey] = entry;
+      else delete next[dateKey];
+      return next;
+    });
+
+    startTransition(async () => {
+      const result = await (entry
+        ? recordWitr(dateKey, entry.status, entry.remade)
+        : clearWitr(dateKey)
+      ).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
+
+      if (!result.ok) {
+        setWitrDays((current) => {
+          const next = { ...current };
+          if (previous) next[dateKey] = previous;
+          else delete next[dateKey];
+          return next;
+        });
+        toast({ message: result.error, tone: "danger" });
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  function saveWitrDay(dateKey: string, status: WitrStatus) {
+    const previous = witrDays[dateKey];
+    if (previous?.status === status) {
+      writeWitr(dateKey, null);
+      return;
+    }
+    writeWitr(dateKey, {
+      prayerDate: dateKey,
+      status,
+      remade: false,
+      loggedAt: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Cycles one sunnah marker: unanswered → prayed → missed → unanswered. A
+   * cycle rather than a pair of buttons, because a history row already carries
+   * five prayers and a pair each would leave nothing tappable at phone width.
+   */
+  function cycleSunnah(dateKey: string, prayer: DailyPrayerKey) {
+    const id = `${dateKey}:${prayer}`;
+    const previous = sunnahDays[id];
+    const next = previous === undefined ? true : previous.prayed ? false : null;
+
+    setSunnahDays((current) => {
+      const updated = { ...current };
+      if (next === null) delete updated[id];
+      else
+        updated[id] = {
+          prayerDate: dateKey,
+          prayer,
+          prayed: next,
+          loggedAt: new Date().toISOString(),
+        };
+      return updated;
+    });
+
+    startTransition(async () => {
+      const result = await (next === null
+        ? clearSunnah(dateKey, prayer)
+        : recordSunnah(dateKey, prayer, next)
+      ).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
+
+      if (!result.ok) {
+        setSunnahDays((current) => {
+          const updated = { ...current };
+          if (previous) updated[id] = previous;
+          else delete updated[id];
+          return updated;
+        });
+        toast({ message: result.error, tone: "danger" });
+        return;
+      }
+      router.refresh();
+    });
+  }
+
   const scopedNights = useMemo(
     () => Object.values(nights).filter((night) => night.prayerDate >= cutoff),
     [nights, cutoff],
   );
 
+  const scopedWitr = useMemo(
+    () => Object.values(witrDays).filter((entry) => entry.prayerDate >= cutoff),
+    [witrDays, cutoff],
+  );
+
+  const scopedSunnah = useMemo(
+    () => Object.values(sunnahDays).filter((entry) => entry.prayerDate >= cutoff),
+    [sunnahDays, cutoff],
+  );
+
   const summary = summarise(scoped);
   const nightSummary = summariseTahajjud(scopedNights);
+  const witrSummary = summariseWitr(scopedWitr);
+  const sunnahSummary = summariseSunnah(scopedSunnah);
   const reasons = topReasons(scoped);
   const hardest = hardestPrayer(scoped);
   const masjidShare =
@@ -361,20 +513,6 @@ export function MasjidHistory({
             </section>
           </div>
 
-          {trackTahajjud && nightSummary.logged > 0 ? (
-            <section className="rounded-lg border border-line bg-surface p-5">
-              <h2 className="text-body font-medium text-ink">Tahajjud</h2>
-              <p className="num mt-2 text-counter leading-none text-ink">
-                {nightSummary.prayed}
-              </p>
-              <p className="mt-1 text-meta text-ink-3">
-                {nightSummary.prayed === 1 ? "night" : "nights"} prayed, of{" "}
-                <span className="num">{nightSummary.logged}</span> logged ·{" "}
-                <span className="num">{nightSummary.woke}</span> woke without praying
-              </p>
-            </section>
-          ) : null}
-
           {reasons.length > 0 ? (
             <section className="rounded-lg border border-line bg-surface p-5">
               <h2 className="text-body font-medium text-ink">What got in the way</h2>
@@ -400,11 +538,78 @@ export function MasjidHistory({
             </section>
           ) : null}
         </>
-      ) : (
+      ) : null}
+
+      {/*
+        Outside the masjid block on purpose: someone who tracks only witr or
+        sunnah still has something worth summarising, and gating these on
+        masjid entries would leave their screen permanently empty.
+      */}
+      {nightSummary.logged + witrSummary.logged + sunnahSummary.logged > 0 ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {trackTahajjud && nightSummary.logged > 0 ? (
+            <section className="rounded-lg border border-line bg-surface p-5">
+              <h2 className="text-body font-medium text-ink">Tahajjud</h2>
+              <p className="num mt-2 text-counter leading-none text-ink">
+                {nightSummary.prayed}
+              </p>
+              <p className="mt-1 text-meta text-ink-3">
+                {nightSummary.prayed === 1 ? "night" : "nights"} prayed, of{" "}
+                <span className="num">{nightSummary.logged}</span> logged ·{" "}
+                <span className="num">{nightSummary.woke}</span> woke without praying
+              </p>
+              {trackTahajjudRakahs && nightSummary.rakahs > 0 ? (
+                <p className="mt-1 text-meta text-ink-3">
+                  <span className="num text-ink-2">{nightSummary.rakahs}</span>{" "}
+                  rak&apos;ahs in all
+                </p>
+              ) : null}
+            </section>
+          ) : null}
+
+          {trackWitr && witrSummary.logged > 0 ? (
+            <section className="rounded-lg border border-line bg-surface p-5">
+              <h2 className="text-body font-medium text-ink">Witr</h2>
+              <p className="num mt-2 text-counter leading-none text-ink">
+                {witrSummary.prayed}
+              </p>
+              <p className="mt-1 text-meta text-ink-3">
+                {witrSummary.prayed === 1 ? "night" : "nights"} prayed, of{" "}
+                <span className="num">{witrSummary.logged}</span> logged
+                {witrSummary.remade > 0 ? (
+                  <>
+                    {" · "}
+                    <span className="num">{witrSummary.remade}</span> made up later
+                  </>
+                ) : null}
+              </p>
+            </section>
+          ) : null}
+
+          {trackSunnah && sunnahSummary.logged > 0 ? (
+            <section className="rounded-lg border border-line bg-surface p-5">
+              <h2 className="text-body font-medium text-ink">Sunnah prayers</h2>
+              <p className="num mt-2 text-counter leading-none text-done">
+                {Math.round((sunnahSummary.prayed / sunnahSummary.logged) * 100)}%
+              </p>
+              <p className="mt-1 text-meta text-ink-3">
+                <span className="num">{sunnahSummary.prayed}</span> prayed of{" "}
+                <span className="num">{sunnahSummary.logged}</span> answered
+              </p>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
+
+      {summary.logged +
+        nightSummary.logged +
+        witrSummary.logged +
+        sunnahSummary.logged ===
+      0 ? (
         <p className="rounded-lg border border-dashed border-line px-5 py-8 text-center text-body text-ink-3">
           Nothing logged in this stretch yet. Tap any prayer below to fill it in.
         </p>
-      )}
+      ) : null}
 
       <section className="flex flex-col gap-2">
         <h2 className="display text-section text-ink">Day by day</h2>
@@ -488,6 +693,98 @@ export function MasjidHistory({
                   </ul>
                 ) : null}
 
+                {trackSunnah ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+                    <p className="text-meta text-ink-3">Sunnah</p>
+                    <div
+                      role="group"
+                      aria-label={`Sunnah on ${formatDateKey(dateKey, false)}`}
+                      className="flex gap-1.5"
+                    >
+                      {BASE_PRAYERS.map((prayer) => {
+                        const marker = sunnahDays[`${dateKey}:${prayer}`];
+                        const state = marker
+                          ? marker.prayed
+                            ? "prayed"
+                            : "missed"
+                          : "not logged";
+                        return (
+                          <button
+                            key={prayer}
+                            type="button"
+                            onClick={() => cycleSunnah(dateKey, prayer)}
+                            aria-label={`${PRAYER_LABELS[prayer]} sunnah on ${formatDateKey(dateKey, false)}: ${state}. Tap to change.`}
+                            className={`grid size-9 place-items-center rounded-md text-meta font-medium transition-colors ${
+                              state === "prayed"
+                                ? "bg-done text-done-ink"
+                                : state === "missed"
+                                  ? "bg-surface-3 text-ink-2"
+                                  : "border border-dashed border-line-strong text-ink-3 hover:bg-surface-2"
+                            }`}
+                          >
+                            {PRAYER_LABELS[prayer].slice(0, 1)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {trackWitr ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+                    <p className="text-meta text-ink-3">
+                      Witr
+                      {witrDays[dateKey]?.status === "missed" ? (
+                        <>
+                          {" · "}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              writeWitr(dateKey, {
+                                ...witrDays[dateKey],
+                                remade: !witrDays[dateKey].remade,
+                              })
+                            }
+                            className={
+                              witrDays[dateKey].remade
+                                ? "text-done underline"
+                                : "text-brand underline"
+                            }
+                          >
+                            {witrDays[dateKey].remade ? "made up" : "mark made up"}
+                          </button>
+                        </>
+                      ) : null}
+                    </p>
+                    <div
+                      role="group"
+                      aria-label={`Witr on ${formatDateKey(dateKey, false)}`}
+                      className="flex gap-1.5"
+                    >
+                      {WITR_STATUSES.map((status) => {
+                        const selected = witrDays[dateKey]?.status === status;
+                        return (
+                          <button
+                            key={status}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => saveWitrDay(dateKey, status)}
+                            className={`min-h-11 rounded-md border px-3 text-meta font-medium transition-colors ${
+                              selected
+                                ? status === "prayed"
+                                  ? "border-transparent bg-done text-done-ink"
+                                  : "border-transparent bg-surface-3 text-ink-2"
+                                : "border-line bg-surface text-ink-3 hover:bg-surface-2 hover:text-ink-2"
+                            }`}
+                          >
+                            {WITR_LABELS[status]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
                 {trackTahajjud ? (
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
                     <p className="text-meta text-ink-3">Tahajjud</p>
@@ -514,6 +811,39 @@ export function MasjidHistory({
                           </button>
                         );
                       })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {trackTahajjud &&
+                trackTahajjudRakahs &&
+                nights[dateKey]?.status === "prayed" ? (
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-meta text-ink-3">Rak&apos;ahs</p>
+                    <div
+                      role="group"
+                      aria-label={`Rak'ahs of tahajjud on ${formatDateKey(dateKey, false)}`}
+                      className="flex items-center gap-2"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => stepNightRakahs(dateKey, -1)}
+                        aria-label="Fewer rak'ahs"
+                        className="grid size-9 place-items-center rounded-md border border-line text-ink-2 hover:bg-surface-2"
+                      >
+                        −
+                      </button>
+                      <span className="num w-8 text-center text-meta text-ink">
+                        {nights[dateKey]?.rakahs ?? DEFAULT_TAHAJJUD_RAKAHS}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => stepNightRakahs(dateKey, 1)}
+                        aria-label="More rak'ahs"
+                        className="grid size-9 place-items-center rounded-md border border-line text-ink-2 hover:bg-surface-2"
+                      >
+                        +
+                      </button>
                     </div>
                   </div>
                 ) : null}
