@@ -287,8 +287,8 @@ export function SettingsScreen({
         />
         <ToggleRow
           label="Track sunnah prayers"
-          summary="A prayed-or-missed marker beside each of the five daily prayers."
-          note="Separate from the qada count. The app only records whether you prayed yours — it doesn't say how many rak'ahs that is."
+          summary="Tap a prayer's name to log its sunnah and nafl rak'ahs."
+          note="Rak'ah counts follow the common Hanafi arrangement — 2 before Fajr, 4 before and 2 after Zuhr, and so on. They're labels on the buttons, never checks on your number, and none of it touches the qada count."
           checked={sunnah}
           onChange={(next) => saveToggle(next, setSunnah, setTrackSunnah)}
         />

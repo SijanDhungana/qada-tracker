@@ -106,6 +106,7 @@ export async function GET() {
     sunnah: sunnah.map((entry) => ({
       date: entry.prayerDate,
       prayer: entry.prayer,
+      part: entry.part,
       prayed: entry.prayed,
       loggedAt: entry.loggedAt,
     })),

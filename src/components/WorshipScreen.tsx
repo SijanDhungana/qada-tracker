@@ -1,15 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   GROUP_LABELS,
   GROUP_ORDER,
   MAX_WORSHIP_COUNT,
+  MAX_WORSHIP_STEP,
   WORSHIP,
+  WORSHIP_KINDS,
   describeCount,
   kindsInGroup,
   totalDhikr,
+  unitFor,
   type WorshipCounts,
   type WorshipKind,
 } from "@/lib/worship";
@@ -17,13 +20,6 @@ import { formatDateKey, shiftDateKey } from "@/lib/time";
 import { bumpWorship, clearWorshipDay, setWorship } from "@/lib/actions/worship";
 import { Sheet } from "./ui/Sheet";
 import { useToast } from "./ui/Toast";
-
-/**
- * Taps are absorbed locally and flushed as one write per kind after a short
- * pause. A hundred-count dhikr session is a hundred instant screen updates and
- * a handful of requests, rather than a hundred round trips racing each other.
- */
-const FLUSH_DELAY_MS = 700;
 
 export type WorshipData = {
   dateKey: string;
@@ -33,85 +29,67 @@ export type WorshipData = {
   weekCounts: WorshipCounts;
 };
 
+/**
+ * A day's voluntary worship. One button adds to it: pick what, pick how much.
+ *
+ * The alternative — nine counters always on screen — made the page a wall of
+ * rows that were zero most days. Here the page shows only what was actually
+ * prayed or recited, and the rest is one tap away.
+ */
 export function WorshipScreen({ data }: { data: WorshipData }) {
   const router = useRouter();
   const toast = useToast();
 
   const [counts, setCounts] = useState<WorshipCounts>(data.counts);
+  const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<WorshipKind | null>(null);
   const [clearOpen, setClearOpen] = useState(false);
   const [, startTransition] = useTransition();
-
-  // Deltas waiting to be written, and the timers that will write them.
-  const pendingRef = useRef<Partial<Record<WorshipKind, number>>>({});
-  const timersRef = useRef<Partial<Record<WorshipKind, ReturnType<typeof setTimeout>>>>(
-    {},
-  );
 
   // A different day was navigated to, or the server sent fresh numbers.
   useEffect(() => {
     setCounts(data.counts);
   }, [data.counts, data.dateKey]);
 
-  const flush = useCallback(
-    (kind: WorshipKind) => {
-      const delta = pendingRef.current[kind] ?? 0;
-      delete pendingRef.current[kind];
-      delete timersRef.current[kind];
-      if (delta === 0) return;
-
-      startTransition(async () => {
-        const result = await bumpWorship(data.dateKey, kind, delta).catch(() => ({
-          ok: false as const,
-          error: "Couldn't save that. Check your connection.",
-        }));
-
-        if (!result.ok) {
-          // Put the taps back so the screen matches what was actually stored.
-          setCounts((current) => ({
-            ...current,
-            [kind]: Math.max(0, (current[kind] ?? 0) - delta),
-          }));
-          toast({ message: result.error, tone: "danger" });
-          return;
-        }
-
-        // The server clamped or merged with a concurrent write; take its word,
-        // but keep any taps that arrived while this request was in flight.
-        const stillPending = pendingRef.current[kind] ?? 0;
-        setCounts((current) => ({ ...current, [kind]: result.count + stillPending }));
-      });
-    },
-    [data.dateKey, toast],
-  );
-
-  // Anything still queued when the screen goes away would otherwise be lost.
-  useEffect(() => {
-    const timers = timersRef.current;
-    return () => {
-      for (const kind of Object.keys(timers) as WorshipKind[]) {
-        clearTimeout(timers[kind]);
-      }
-    };
-  }, []);
-
-  function bump(kind: WorshipKind, delta: number) {
+  function add(kind: WorshipKind, amount: number) {
+    const previous = counts[kind] ?? 0;
     setCounts((current) => ({
       ...current,
-      [kind]: Math.min(MAX_WORSHIP_COUNT, Math.max(0, (current[kind] ?? 0) + delta)),
+      [kind]: Math.min(MAX_WORSHIP_COUNT, previous + amount),
     }));
 
-    pendingRef.current[kind] = (pendingRef.current[kind] ?? 0) + delta;
-    clearTimeout(timersRef.current[kind]);
-    timersRef.current[kind] = setTimeout(() => flush(kind), FLUSH_DELAY_MS);
+    startTransition(async () => {
+      const result = await bumpWorship(data.dateKey, kind, amount).catch(() => ({
+        ok: false as const,
+        error: "Couldn't save that. Check your connection.",
+      }));
+
+      if (!result.ok) {
+        setCounts((current) => ({ ...current, [kind]: previous }));
+        toast({ message: result.error, tone: "danger" });
+        return;
+      }
+
+      // The server is the authority — it clamps, and it may have merged with a
+      // write from another tab.
+      setCounts((current) => ({ ...current, [kind]: result.count }));
+      toast({
+        message: `${WORSHIP[kind].label} · ${describeCount(kind, result.count)} today`,
+        coalesceKey: `worship-${kind}`,
+        action: {
+          label: "Undo",
+          run: async () => {
+            setCounts((current) => ({ ...current, [kind]: previous }));
+            await setWorship(data.dateKey, kind, previous);
+            router.refresh();
+          },
+        },
+      });
+      router.refresh();
+    });
   }
 
   function saveExact(kind: WorshipKind, value: number) {
-    // A typed number replaces everything, so any queued taps are stale.
-    clearTimeout(timersRef.current[kind]);
-    delete timersRef.current[kind];
-    delete pendingRef.current[kind];
-
     const previous = counts[kind] ?? 0;
     setCounts((current) => ({ ...current, [kind]: value }));
 
@@ -123,7 +101,9 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
       if (!result.ok) {
         setCounts((current) => ({ ...current, [kind]: previous }));
         toast({ message: result.error, tone: "danger" });
+        return;
       }
+      router.refresh();
     });
   }
 
@@ -150,7 +130,7 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
   const isToday = data.dateKey === data.today;
   const dhikrToday = totalDhikr(counts);
   const dhikrWeek = totalDhikr(data.weekCounts);
-  const anythingLogged = Object.values(counts).some((value) => (value ?? 0) > 0);
+  const logged = WORSHIP_KINDS.filter((kind) => (counts[kind] ?? 0) > 0);
 
   function goTo(dateKey: string) {
     if (dateKey > data.today) return;
@@ -158,7 +138,7 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-7 px-4 py-6 sm:px-6">
+    <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
       <header className="flex flex-col gap-3">
         <h1 className="display text-title text-ink">Acts of worship</h1>
         <p className="text-body text-ink-2">
@@ -182,9 +162,9 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
             {isToday ? "Today" : formatDateKey(data.dateKey)}
           </p>
           <p className="text-meta text-ink-3">
-            {dhikrToday > 0
-              ? `${dhikrToday.toLocaleString()} dhikr logged`
-              : "Nothing logged yet"}
+            {logged.length === 0
+              ? "Nothing logged yet"
+              : `${logged.length} ${logged.length === 1 ? "thing" : "things"} logged`}
           </p>
         </div>
         <button
@@ -198,43 +178,104 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
         </button>
       </div>
 
-      {/* Only worth saying once the week holds more than the day already shows. */}
-      {dhikrWeek > dhikrToday ? (
-        <p className="text-meta text-ink-3">
-          <span className="num text-ink-2">{dhikrWeek.toLocaleString()}</span> dhikr
-          over the last seven days.
-        </p>
-      ) : null}
+      <button
+        type="button"
+        onClick={() => setAdding(true)}
+        className="flex min-h-14 w-full items-center justify-center gap-2 rounded-md bg-brand text-body font-semibold text-done-ink"
+      >
+        <span aria-hidden="true" className="text-counter leading-none">
+          +
+        </span>
+        Log worship
+      </button>
 
-      {GROUP_ORDER.map((group) => (
-        <section key={group} aria-labelledby={`${group}-heading`} className="flex flex-col gap-3">
-          <h2 id={`${group}-heading`} className="display text-section text-ink">
-            {GROUP_LABELS[group]}
+      {logged.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-line px-5 py-8 text-center text-body text-ink-3">
+          Nothing logged for this day yet. Tap the button above to add nafl
+          rak&apos;ahs, dhikr, or Qur&apos;an.
+        </p>
+      ) : (
+        <section aria-labelledby="logged-heading" className="flex flex-col gap-3">
+          <h2 id="logged-heading" className="display text-section text-ink">
+            {isToday ? "Today" : formatDateKey(data.dateKey, false)}
           </h2>
           <ul className="flex flex-col gap-2">
-            {kindsInGroup(group).map((kind) => (
-              <CounterRow
+            {logged.map((kind) => (
+              <li
                 key={kind}
-                kind={kind}
-                count={counts[kind] ?? 0}
-                onBump={(delta) => bump(kind, delta)}
-                onEdit={() => setEditing(kind)}
-              />
+                className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-md border border-line bg-surface px-3 py-3"
+              >
+                <div className="min-w-32 flex-1">
+                  <p className="text-name font-medium text-ink">
+                    {WORSHIP[kind].label}
+                  </p>
+                  {/* Only the number is tabular — running the class over the
+                      words as well would set them in the numeric face. */}
+                  <p className="text-meta text-ink-3">
+                    <span className="num">
+                      {(counts[kind] ?? 0).toLocaleString()}
+                    </span>{" "}
+                    {unitFor(kind, counts[kind] ?? 0)}
+                  </p>
+                </div>
+
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditing(kind)}
+                    className="min-h-11 rounded-md border border-line px-3 text-meta font-medium text-ink-2 hover:bg-surface-2"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => add(kind, WORSHIP[kind].step)}
+                    aria-label={`Add ${WORSHIP[kind].step} to ${WORSHIP[kind].label}`}
+                    className="grid size-11 place-items-center rounded-md bg-brand text-name font-semibold text-done-ink"
+                  >
+                    +{WORSHIP[kind].step > 1 ? WORSHIP[kind].step : ""}
+                  </button>
+                </div>
+              </li>
             ))}
           </ul>
-        </section>
-      ))}
 
-      <div>
-        <button
-          type="button"
-          onClick={() => setClearOpen(true)}
-          disabled={!anythingLogged}
-          className="min-h-11 rounded-md border border-line px-4 text-body font-medium text-ink-2 hover:bg-surface-2 disabled:opacity-40"
-        >
-          Clear this day
-        </button>
-      </div>
+          {dhikrToday > 0 ? (
+            <p className="text-meta text-ink-3">
+              <span className="num text-ink-2">{dhikrToday.toLocaleString()}</span>{" "}
+              dhikr in all
+              {dhikrWeek > dhikrToday ? (
+                <>
+                  {" · "}
+                  <span className="num text-ink-2">
+                    {dhikrWeek.toLocaleString()}
+                  </span>{" "}
+                  over the last seven days
+                </>
+              ) : null}
+            </p>
+          ) : null}
+
+          <div>
+            <button
+              type="button"
+              onClick={() => setClearOpen(true)}
+              className="min-h-11 rounded-md border border-line px-4 text-body font-medium text-ink-2 hover:bg-surface-2"
+            >
+              Clear this day
+            </button>
+          </div>
+        </section>
+      )}
+
+      <AddSheet
+        open={adding}
+        onClose={() => setAdding(false)}
+        onAdd={(kind, amount) => {
+          add(kind, amount);
+          setAdding(false);
+        }}
+      />
 
       <ExactSheet
         kind={editing}
@@ -277,75 +318,155 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
   );
 }
 
-function CounterRow({
-  kind,
-  count,
-  onBump,
-  onEdit,
+/** Pick what was done, then how much of it. */
+function AddSheet({
+  open,
+  onClose,
+  onAdd,
 }: {
-  kind: WorshipKind;
-  count: number;
-  onBump: (delta: number) => void;
-  onEdit: () => void;
+  open: boolean;
+  onClose: () => void;
+  onAdd: (kind: WorshipKind, amount: number) => void;
 }) {
-  const definition = WORSHIP[kind];
+  const [kind, setKind] = useState<WorshipKind | null>(null);
+  const [text, setText] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setKind(null);
+    setText("");
+  }, [open]);
+
+  function choose(next: WorshipKind) {
+    setKind(next);
+    // Seed the amount with one step, so the common case is pick-and-add.
+    setText(String(WORSHIP[next].step));
+  }
+
+  const amount = Number(text);
+  const valid =
+    kind !== null &&
+    text.trim() !== "" &&
+    Number.isInteger(amount) &&
+    amount >= 1 &&
+    amount <= MAX_WORSHIP_STEP;
 
   return (
-    <li className="rounded-md border border-line bg-surface px-3 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-3">
-        <div className="min-w-32 flex-1">
-          <p className="text-name font-medium text-ink">{definition.label}</p>
-          {definition.sub ? (
-            <p className="text-meta text-ink-3">{definition.sub}</p>
-          ) : null}
-        </div>
-
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => onBump(-definition.step)}
-            disabled={count <= 0}
-            aria-label={`Remove ${definition.step} from ${definition.label}`}
-            className="grid size-11 place-items-center rounded-md border border-line text-name text-ink-2 hover:bg-surface-2 disabled:opacity-30"
-          >
-            −
-          </button>
-
-          <button
-            type="button"
-            onClick={onEdit}
-            aria-label={`${definition.label}: ${describeCount(kind, count)}. Type an exact number.`}
-            className="num min-w-16 rounded-md px-1 text-center text-counter text-ink hover:bg-surface-2"
-          >
-            {count.toLocaleString()}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onBump(definition.step)}
-            aria-label={`Add ${definition.step} to ${definition.label}`}
-            className="grid size-11 place-items-center rounded-md bg-brand text-name font-semibold text-done-ink"
-          >
-            +{definition.step > 1 ? definition.step : ""}
-          </button>
-        </div>
-      </div>
-
-      {definition.quickAdds.length > 0 ? (
-        <div className="mt-2.5 flex flex-wrap gap-1.5">
-          {definition.quickAdds.map((amount) => (
-            <button
-              key={amount}
-              type="button"
-              onClick={() => onBump(amount)}
-              className="min-h-9 rounded-md border border-line px-3 text-meta font-medium text-ink-3 hover:bg-surface-2 hover:text-ink-2"
-            >
-              +{amount}
-            </button>
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title={kind ? WORSHIP[kind].label : "Log worship"}
+      description={
+        kind
+          ? "How much are you adding to today?"
+          : "Pick what you prayed or recited."
+      }
+    >
+      {kind === null ? (
+        <div className="flex flex-col gap-5">
+          {GROUP_ORDER.map((group) => (
+            <div key={group}>
+              <p className="mb-2 text-meta font-medium tracking-wide text-ink-3 uppercase">
+                {GROUP_LABELS[group]}
+              </p>
+              <div
+                role="group"
+                aria-label={GROUP_LABELS[group]}
+                className="flex flex-col gap-2"
+              >
+                {kindsInGroup(group).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => choose(option)}
+                    className="flex min-h-12 items-center justify-between gap-3 rounded-md border border-line bg-surface-2 px-3 py-2.5 text-left hover:border-brand"
+                  >
+                    <span>
+                      <span className="block text-body font-medium text-ink">
+                        {WORSHIP[option].label}
+                      </span>
+                      {WORSHIP[option].sub ? (
+                        <span className="block text-meta text-ink-3">
+                          {WORSHIP[option].sub}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span aria-hidden="true" className="shrink-0 text-ink-3">
+                      ›
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
-      ) : null}
-    </li>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap gap-2">
+            {quickAmounts(kind).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setText(String(value))}
+                aria-pressed={amount === value}
+                className={`min-h-11 rounded-md border px-3.5 text-meta font-medium transition-colors ${
+                  amount === value
+                    ? "border-brand bg-brand-wash text-brand"
+                    : "border-line bg-surface-2 text-ink-2 hover:text-ink"
+                }`}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+
+          <div>
+            <label htmlFor="worship-amount" className="mb-1.5 block text-meta text-ink-2">
+              How many {WORSHIP[kind].unit[1]}?
+            </label>
+            <input
+              id="worship-amount"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={MAX_WORSHIP_STEP}
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              className="min-h-12 w-full rounded-md border border-line bg-surface-2 px-3 text-body text-ink outline-none focus:border-brand"
+            />
+            <p className="mt-1.5 text-meta text-ink-3">
+              Up to {MAX_WORSHIP_STEP.toLocaleString()} at a time. Add again for
+              more.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            disabled={!valid}
+            onClick={() => onAdd(kind, amount)}
+            className="min-h-12 w-full rounded-md bg-brand text-body font-semibold text-done-ink disabled:opacity-50"
+          >
+            Add {valid ? describeCount(kind, amount) : ""}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setKind(null)}
+            className="min-h-12 w-full rounded-md border border-line text-body font-medium text-ink-2"
+          >
+            Pick something else
+          </button>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+/** Sensible jumps for this kind, without repeating the step itself twice. */
+function quickAmounts(kind: WorshipKind): number[] {
+  const definition = WORSHIP[kind];
+  return [definition.step, ...definition.quickAdds].filter(
+    (value, index, all) => all.indexOf(value) === index,
   );
 }
 
@@ -378,7 +499,7 @@ function ExactSheet({
       open={kind !== null}
       onClose={onClose}
       title={kind ? WORSHIP[kind].label : ""}
-      description="Type the total for this day. Useful after counting on a tasbih."
+      description="Set the total for this day. Useful after counting on a tasbih."
     >
       <div className="flex flex-col gap-4">
         <label htmlFor="worship-exact" className="text-meta text-ink-2">
@@ -394,6 +515,7 @@ function ExactSheet({
           onChange={(event) => setText(event.target.value)}
           className="min-h-12 w-full rounded-md border border-line bg-surface-2 px-3 text-body text-ink outline-none focus:border-brand"
         />
+        <p className="text-meta text-ink-3">Set it to 0 to remove it from the day.</p>
         <button
           type="button"
           disabled={!valid}

@@ -13,7 +13,7 @@ import { requireUser } from "@/lib/session";
 import { ALL_PRAYERS, prayersFor, type PrayerKey } from "@/lib/prayers";
 import type { DailyPrayerKey } from "@/lib/prayers";
 import type { MasjidEntry, MasjidStatus, MasjidTiming } from "@/lib/masjid";
-import type { SunnahEntry } from "@/lib/sunnah";
+import type { SunnahEntry, SunnahPart } from "@/lib/sunnah";
 import type { TahajjudEntry, TahajjudStatus } from "@/lib/tahajjud";
 import type { WitrEntry, WitrStatus } from "@/lib/witr";
 import type { WorshipCounts, WorshipKind } from "@/lib/worship";
@@ -181,6 +181,7 @@ export default async function TodayPage() {
       .select({
         prayerDate: sunnahLog.prayerDate,
         prayer: sunnahLog.prayer,
+        part: sunnahLog.part,
         prayed: sunnahLog.prayed,
         loggedAt: sunnahLog.loggedAt,
       })
@@ -243,6 +244,7 @@ export default async function TodayPage() {
   const sunnahToday: SunnahEntry[] = sunnahRows.map((row) => ({
     prayerDate: row.prayerDate,
     prayer: row.prayer as DailyPrayerKey,
+    part: row.part as SunnahPart,
     prayed: row.prayed,
     loggedAt: row.loggedAt.toISOString(),
   }));

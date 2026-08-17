@@ -147,10 +147,15 @@ export function kindsInGroup(group: WorshipGroup): WorshipKind[] {
   return WORSHIP_KINDS.filter((kind) => WORSHIP[kind].group === group);
 }
 
+/** "rak'ah" or "rak'ahs", whichever this number takes. */
+export function unitFor(kind: WorshipKind, count: number): string {
+  const [singular, plural] = WORSHIP[kind].unit;
+  return count === 1 ? singular : plural;
+}
+
 /** "1 rak'ah" / "12 rak'ahs" */
 export function describeCount(kind: WorshipKind, count: number): string {
-  const [singular, plural] = WORSHIP[kind].unit;
-  return `${count.toLocaleString()} ${count === 1 ? singular : plural}`;
+  return `${count.toLocaleString()} ${unitFor(kind, count)}`;
 }
 
 /** A day's counts, keyed by kind. Kinds with nothing logged are simply absent. */

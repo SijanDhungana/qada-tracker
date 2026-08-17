@@ -157,7 +157,12 @@ export const dailyWitr = pgTable(
   ],
 );
 
-/** Whether the sunnah attached to each fard prayer was prayed. */
+/**
+ * The voluntary rak'ahs around each fard prayer — one row per part, per
+ * prayer, per day. Split by part rather than a single yes/no because "prayed
+ * the four before but not the two after" is the ordinary case, and collapsing
+ * it would throw away the only detail that makes the record worth keeping.
+ */
 export const sunnahLog = pgTable(
   "sunnah_log",
   {
@@ -168,16 +173,19 @@ export const sunnahLog = pgTable(
     prayerDate: date("prayer_date").notNull(),
     /** fajr | zuhr | asr | maghrib | isha */
     prayer: text("prayer").notNull(),
+    /** before | after | nafl — see SUNNAH_PARTS in lib/sunnah.ts */
+    part: text("part").notNull(),
     prayed: boolean("prayed").notNull(),
     loggedAt: timestamp("logged_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (table) => [
-    unique("sunnah_log_user_date_prayer_key").on(
+    unique("sunnah_log_user_date_part_key").on(
       table.userId,
       table.prayerDate,
       table.prayer,
+      table.part,
     ),
   ],
 );

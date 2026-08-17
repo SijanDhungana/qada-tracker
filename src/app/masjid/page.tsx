@@ -4,7 +4,7 @@ import { dailyWitr, masjidPrayers, sunnahLog, tahajjudNights } from "@/db/schema
 import { requireUser } from "@/lib/session";
 import type { DailyPrayerKey } from "@/lib/prayers";
 import type { MasjidEntry, MasjidStatus, MasjidTiming } from "@/lib/masjid";
-import type { SunnahEntry } from "@/lib/sunnah";
+import type { SunnahEntry, SunnahPart } from "@/lib/sunnah";
 import type { TahajjudEntry, TahajjudStatus } from "@/lib/tahajjud";
 import type { WitrEntry, WitrStatus } from "@/lib/witr";
 import { shiftDateKey, todayKeyInZone } from "@/lib/time";
@@ -72,6 +72,7 @@ export default async function MasjidPage() {
       .select({
         prayerDate: sunnahLog.prayerDate,
         prayer: sunnahLog.prayer,
+        part: sunnahLog.part,
         prayed: sunnahLog.prayed,
         loggedAt: sunnahLog.loggedAt,
       })
@@ -107,6 +108,7 @@ export default async function MasjidPage() {
   const sunnah: SunnahEntry[] = sunnahRows.map((row) => ({
     prayerDate: row.prayerDate,
     prayer: row.prayer as DailyPrayerKey,
+    part: row.part as SunnahPart,
     prayed: row.prayed,
     loggedAt: row.loggedAt.toISOString(),
   }));

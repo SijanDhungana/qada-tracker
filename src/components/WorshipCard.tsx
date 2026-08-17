@@ -21,7 +21,7 @@ export function WorshipCard({ counts }: { counts: WorshipCounts }) {
           href="/worship"
           className="shrink-0 rounded-sm text-meta font-medium text-brand hover:underline"
         >
-          Open counters →
+          Log worship →
         </Link>
       </div>
 

@@ -147,7 +147,7 @@ export async function GET() {
         "masjid_prayers.joined_rakah",
         "tahajjud_nights.rakahs",
         "daily_witr.remade",
-        "sunnah_log.prayed",
+        "sunnah_log.part",
         "worship_log.count",
       ];
       const missing = required.filter((column) => !present.has(column));

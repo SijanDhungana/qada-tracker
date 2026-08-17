@@ -24,7 +24,14 @@ import {
   type TahajjudEntry,
   type TahajjudStatus,
 } from "@/lib/tahajjud";
-import { summariseSunnah, type SunnahEntry } from "@/lib/sunnah";
+import {
+  describeParts,
+  hasParts,
+  partsFor,
+  summariseSunnah,
+  type PartAnswers,
+  type SunnahEntry,
+} from "@/lib/sunnah";
 import {
   WITR_LABELS,
   WITR_STATUSES,
@@ -35,13 +42,9 @@ import {
 import { formatDateKey, shiftDateKey } from "@/lib/time";
 import { clearMasjidPrayer, recordMasjidPrayer } from "@/lib/actions/masjid";
 import { clearTahajjud, recordTahajjud } from "@/lib/actions/tahajjud";
-import { clearSunnah, recordSunnah } from "@/lib/actions/sunnah";
+import { clearSunnah, saveSunnahParts } from "@/lib/actions/sunnah";
 import { clearWitr, recordWitr } from "@/lib/actions/witr";
-import {
-  MasjidEditorSheet,
-  type EditorSave,
-  type EditorTarget,
-} from "./MasjidEditorSheet";
+import { PrayerSheet, type SheetSave, type SheetTarget } from "./PrayerSheet";
 import { SegmentedControl } from "./ui/SegmentedControl";
 import { useToast } from "./ui/Toast";
 
@@ -55,6 +58,10 @@ type Range = "7" | "30" | "90";
 
 function keyOf(entry: { prayerDate: string; prayer: string }) {
   return `${entry.prayerDate}:${entry.prayer}`;
+}
+
+function partKey(entry: { prayerDate: string; prayer: string; part: string }) {
+  return `${entry.prayerDate}:${entry.prayer}:${entry.part}`;
 }
 
 const TAHAJJUD_DOT: Record<TahajjudStatus, string> = {
@@ -96,10 +103,11 @@ export function MasjidHistory({
   const [witrDays, setWitrDays] = useState<Record<string, WitrEntry>>(() =>
     Object.fromEntries(initialWitr.map((entry) => [entry.prayerDate, entry])),
   );
+  // Keyed "date:prayer:part" so one prayer's parts stay independent.
   const [sunnahDays, setSunnahDays] = useState<Record<string, SunnahEntry>>(() =>
-    Object.fromEntries(initialSunnah.map((entry) => [keyOf(entry), entry])),
+    Object.fromEntries(initialSunnah.map((entry) => [partKey(entry), entry])),
   );
-  const [target, setTarget] = useState<EditorTarget | null>(null);
+  const [target, setTarget] = useState<SheetTarget | null>(null);
   const [, startTransition] = useTransition();
 
   const cutoff = useMemo(() => shiftDateKey(today, -Number(range) + 1), [today, range]);
@@ -119,53 +127,83 @@ export function MasjidHistory({
     return list;
   }, [today, range]);
 
-  function save(dateKey: string, prayer: DailyPrayerKey, value: EditorSave) {
-    const { status, timing, joinedRakah, reason } = value;
+  function save(dateKey: string, prayer: DailyPrayerKey, value: SheetSave) {
     const id = `${dateKey}:${prayer}`;
     const previous = entries[id];
-    const optimistic: MasjidEntry = {
-      prayerDate: dateKey,
-      prayer,
-      status,
-      timing,
-      joinedRakah,
-      reason,
-      loggedAt: new Date().toISOString(),
-    };
-    setEntries((current) => ({ ...current, [id]: optimistic }));
+    const previousParts = partAnswers(dateKey, prayer);
+
+    const optimistic: MasjidEntry | null = value.masjid
+      ? {
+          prayerDate: dateKey,
+          prayer,
+          status: value.masjid.status,
+          timing: value.masjid.timing,
+          joinedRakah: value.masjid.joinedRakah,
+          reason: value.masjid.reason,
+          loggedAt: new Date().toISOString(),
+        }
+      : null;
+
+    setEntries((current) => {
+      const next = { ...current };
+      if (optimistic) next[id] = optimistic;
+      else delete next[id];
+      return next;
+    });
+    applyParts(dateKey, prayer, value.parts);
+
+    function rollback() {
+      setEntries((current) => {
+        const next = { ...current };
+        if (previous) next[id] = previous;
+        else delete next[id];
+        return next;
+      });
+      applyParts(dateKey, prayer, previousParts);
+    }
 
     startTransition(async () => {
-      const result = await recordMasjidPrayer({
-        prayerDate: dateKey,
-        prayer,
-        status,
-        timing,
-        joinedRakah,
-        reason,
-      }).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
+      const writes: Promise<{ ok: boolean; error?: string }>[] = [];
 
-      if (!result.ok) {
-        setEntries((current) => {
-          const next = { ...current };
-          if (previous) next[id] = previous;
-          else delete next[id];
-          return next;
-        });
-        toast({ message: result.error, tone: "danger" });
+      if (value.masjid) {
+        writes.push(
+          recordMasjidPrayer({
+            prayerDate: dateKey,
+            prayer,
+            status: value.masjid.status,
+            timing: value.masjid.timing,
+            joinedRakah: value.masjid.joinedRakah,
+            reason: value.masjid.reason,
+          }),
+        );
+      } else if (previous) {
+        writes.push(clearMasjidPrayer(dateKey, prayer));
+      }
+
+      if (trackSunnah && hasParts(prayer)) {
+        writes.push(saveSunnahParts(dateKey, prayer, value.parts));
+      }
+
+      const results = await Promise.all(
+        writes.map((write) =>
+          write.catch(() => ({ ok: false, error: "Couldn't save that." })),
+        ),
+      );
+
+      const failure = results.find((result) => !result.ok);
+      if (failure) {
+        rollback();
+        toast({ message: failure.error ?? "Couldn't save that.", tone: "danger" });
         return;
       }
 
       toast({
-        message: `${PRAYER_LABELS[prayer]} on ${formatDateKey(dateKey, false)} · ${STATUS_SHORT[status].toLowerCase()}`,
+        message: `${PRAYER_LABELS[prayer]} on ${formatDateKey(dateKey, false)} saved`,
+        coalesceKey: "prayer",
         action: {
           label: "Undo",
           run: async () => {
-            setEntries((current) => {
-              const next = { ...current };
-              if (previous) next[id] = previous;
-              else delete next[id];
-              return next;
-            });
+            rollback();
             if (previous) {
               await recordMasjidPrayer({
                 prayerDate: dateKey,
@@ -177,6 +215,9 @@ export function MasjidHistory({
               });
             } else {
               await clearMasjidPrayer(dateKey, prayer);
+            }
+            if (trackSunnah && hasParts(prayer)) {
+              await saveSunnahParts(dateKey, prayer, previousParts);
             }
             router.refresh();
           },
@@ -194,7 +235,9 @@ export function MasjidHistory({
       delete next[id];
       return next;
     });
+    applyParts(dateKey, prayer, {});
     setTarget(null);
+    void clearSunnah(dateKey, prayer);
 
     startTransition(async () => {
       const result = await clearMasjidPrayer(dateKey, prayer).catch(() => ({
@@ -316,46 +359,40 @@ export function MasjidHistory({
     });
   }
 
-  /**
-   * Cycles one sunnah marker: unanswered → prayed → missed → unanswered. A
-   * cycle rather than a pair of buttons, because a history row already carries
-   * five prayers and a pair each would leave nothing tappable at phone width.
-   */
-  function cycleSunnah(dateKey: string, prayer: DailyPrayerKey) {
-    const id = `${dateKey}:${prayer}`;
-    const previous = sunnahDays[id];
-    const next = previous === undefined ? true : previous.prayed ? false : null;
+  /** What is currently recorded for one prayer's voluntary rak'ahs. */
+  function partAnswers(dateKey: string, prayer: DailyPrayerKey): PartAnswers {
+    const answers: PartAnswers = {};
+    for (const spec of partsFor(prayer)) {
+      const row = sunnahDays[`${dateKey}:${prayer}:${spec.part}`];
+      if (row) answers[spec.part] = row.prayed;
+    }
+    return answers;
+  }
 
+  /** Mirrors a saved set of answers into local state, dropping the blanks. */
+  function applyParts(
+    dateKey: string,
+    prayer: DailyPrayerKey,
+    answers: PartAnswers,
+  ) {
     setSunnahDays((current) => {
       const updated = { ...current };
-      if (next === null) delete updated[id];
-      else
-        updated[id] = {
-          prayerDate: dateKey,
-          prayer,
-          prayed: next,
-          loggedAt: new Date().toISOString(),
-        };
-      return updated;
-    });
-
-    startTransition(async () => {
-      const result = await (next === null
-        ? clearSunnah(dateKey, prayer)
-        : recordSunnah(dateKey, prayer, next)
-      ).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
-
-      if (!result.ok) {
-        setSunnahDays((current) => {
-          const updated = { ...current };
-          if (previous) updated[id] = previous;
-          else delete updated[id];
-          return updated;
-        });
-        toast({ message: result.error, tone: "danger" });
-        return;
+      for (const spec of partsFor(prayer)) {
+        const id = `${dateKey}:${prayer}:${spec.part}`;
+        const value = answers[spec.part];
+        if (typeof value === "boolean") {
+          updated[id] = {
+            prayerDate: dateKey,
+            prayer,
+            part: spec.part,
+            prayed: value,
+            loggedAt: new Date().toISOString(),
+          };
+        } else {
+          delete updated[id];
+        }
       }
-      router.refresh();
+      return updated;
     });
   }
 
@@ -661,7 +698,8 @@ export function MasjidHistory({
                               timing: entry?.timing ?? null,
                               joinedRakah: entry?.joinedRakah ?? null,
                               reason: entry?.reason ?? null,
-                              askStatus: true,
+                              parts: partAnswers(dateKey, prayer),
+                              showParts: trackSunnah,
                             })
                           }
                           aria-label={
@@ -695,31 +733,70 @@ export function MasjidHistory({
 
                 {trackSunnah ? (
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
-                    <p className="text-meta text-ink-3">Sunnah</p>
+                    <p className="text-meta text-ink-3">
+                      Sunnah
+                      {(() => {
+                        // The rak'ahs kept across the whole day, in one number.
+                        const rakahs = BASE_PRAYERS.reduce((sum, prayer) => {
+                          const answers = partAnswers(dateKey, prayer);
+                          return (
+                            sum +
+                            partsFor(prayer)
+                              .filter((spec) => answers[spec.part] === true)
+                              .reduce((inner, spec) => inner + spec.rakahs, 0)
+                          );
+                        }, 0);
+                        return rakahs > 0 ? (
+                          <span className="num text-ink-2"> · {rakahs} rak&apos;ahs</span>
+                        ) : null;
+                      })()}
+                    </p>
                     <div
                       role="group"
                       aria-label={`Sunnah on ${formatDateKey(dateKey, false)}`}
                       className="flex gap-1.5"
                     >
-                      {BASE_PRAYERS.map((prayer) => {
-                        const marker = sunnahDays[`${dateKey}:${prayer}`];
-                        const state = marker
-                          ? marker.prayed
-                            ? "prayed"
-                            : "missed"
-                          : "not logged";
+                      {BASE_PRAYERS.filter(hasParts).map((prayer) => {
+                        const answers = partAnswers(dateKey, prayer);
+                        const specs = partsFor(prayer);
+                        const answered = specs.filter(
+                          (spec) => answers[spec.part] !== undefined,
+                        ).length;
+                        const prayed = specs.filter(
+                          (spec) => answers[spec.part] === true,
+                        ).length;
+                        const summary = describeParts(prayer, answers);
+
                         return (
                           <button
                             key={prayer}
                             type="button"
-                            onClick={() => cycleSunnah(dateKey, prayer)}
-                            aria-label={`${PRAYER_LABELS[prayer]} sunnah on ${formatDateKey(dateKey, false)}: ${state}. Tap to change.`}
+                            onClick={() =>
+                              setTarget({
+                                dateKey,
+                                prayer,
+                                status: entries[`${dateKey}:${prayer}`]?.status,
+                                timing:
+                                  entries[`${dateKey}:${prayer}`]?.timing ?? null,
+                                joinedRakah:
+                                  entries[`${dateKey}:${prayer}`]?.joinedRakah ?? null,
+                                reason:
+                                  entries[`${dateKey}:${prayer}`]?.reason ?? null,
+                                parts: answers,
+                                showParts: true,
+                              })
+                            }
+                            aria-label={`${PRAYER_LABELS[prayer]} sunnah on ${formatDateKey(dateKey, false)}: ${
+                              answered === 0 ? "not logged" : (summary ?? "none prayed")
+                            }. Tap to change.`}
                             className={`grid size-9 place-items-center rounded-md text-meta font-medium transition-colors ${
-                              state === "prayed"
+                              prayed === specs.length
                                 ? "bg-done text-done-ink"
-                                : state === "missed"
-                                  ? "bg-surface-3 text-ink-2"
-                                  : "border border-dashed border-line-strong text-ink-3 hover:bg-surface-2"
+                                : prayed > 0
+                                  ? "bg-done-2 text-done-ink"
+                                  : answered > 0
+                                    ? "bg-surface-3 text-ink-2"
+                                    : "border border-dashed border-line-strong text-ink-3 hover:bg-surface-2"
                             }`}
                           >
                             {PRAYER_LABELS[prayer].slice(0, 1)}
@@ -853,7 +930,7 @@ export function MasjidHistory({
         </ul>
       </section>
 
-      <MasjidEditorSheet
+      <PrayerSheet
         target={target}
         onClose={() => setTarget(null)}
         onSave={(value) => {
