@@ -149,6 +149,7 @@ export async function GET() {
         "daily_witr.remade",
         "sunnah_log.part",
         "worship_log.count",
+        "quran_log.surah",
       ];
       const missing = required.filter((column) => !present.has(column));
 

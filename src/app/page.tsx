@@ -5,6 +5,7 @@ import {
   dailyWitr,
   masjidPrayers,
   prayerDays,
+  quranLog,
   sunnahLog,
   tahajjudNights,
   worshipLog,
@@ -89,6 +90,7 @@ export default async function TodayPage() {
     witrRows,
     sunnahRows,
     worshipRows,
+    surahRows,
   ] = await Promise.all([
     db
       .select({
@@ -194,6 +196,11 @@ export default async function TodayPage() {
       .where(
         and(eq(worshipLog.userId, user.id), gte(worshipLog.prayerDate, todayKey)),
       ),
+
+    db
+      .select({ surah: quranLog.surah })
+      .from(quranLog)
+      .where(and(eq(quranLog.userId, user.id), gte(quranLog.prayerDate, todayKey))),
   ]);
 
   const perDay = counted.length;
@@ -277,6 +284,7 @@ export default async function TodayPage() {
     trackSunnah: user.trackSunnah,
     sunnahToday,
     worshipToday,
+    surahsToday: surahRows.length,
   };
 
   return (

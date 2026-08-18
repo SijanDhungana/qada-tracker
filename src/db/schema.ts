@@ -220,6 +220,38 @@ export const worshipLog = pgTable(
   ],
 );
 
+/**
+ * Which surahs were read on a day — a set, not a tally.
+ *
+ * The unique key means reading Al-Ikhlas three times records the surah once:
+ * the question this answers is "what did you read today", and counting
+ * repetitions would make a short surah read on a loop outrank a long one.
+ * Juz stay a plain number in worship_log, where a count is the whole point.
+ */
+export const quranLog = pgTable(
+  "quran_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    prayerDate: date("prayer_date").notNull(),
+    /** 1–114, validated against SURAHS in lib/quran.ts before it is written. */
+    surah: integer("surah").notNull(),
+    loggedAt: timestamp("logged_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("quran_log_user_date_idx").on(table.userId, table.prayerDate),
+    unique("quran_log_user_date_surah_key").on(
+      table.userId,
+      table.prayerDate,
+      table.surah,
+    ),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type PrayerDay = typeof prayerDays.$inferSelect;
 export type MasjidPrayer = typeof masjidPrayers.$inferSelect;

@@ -53,6 +53,8 @@ export type TodayData = {
   trackSunnah: boolean;
   sunnahToday: SunnahEntry[];
   worshipToday: WorshipCounts;
+  /** How many surahs were read today — the names live on /worship. */
+  surahsToday: number;
 };
 
 export function TodayScreen({ data }: { data: TodayData }) {
@@ -342,7 +344,7 @@ export function TodayScreen({ data }: { data: TodayData }) {
       />
 
       {/* 6. Everything voluntary, summarised. */}
-      <WorshipCard counts={data.worshipToday} />
+      <WorshipCard counts={data.worshipToday} surahsRead={data.surahsToday} />
 
       {/* 7. The ledger grid. */}
       <section aria-labelledby="grid-heading" className="flex flex-col gap-3">

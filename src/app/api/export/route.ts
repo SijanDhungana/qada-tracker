@@ -4,6 +4,7 @@ import {
   dailyWitr,
   masjidPrayers,
   prayerDays,
+  quranLog,
   sunnahLog,
   tahajjudNights,
   worshipLog,
@@ -22,7 +23,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const user = await requireUser();
 
-  const [days, masjid, nights, witr, sunnah, worship] = await Promise.all([
+  const [days, masjid, nights, witr, sunnah, worship, quran] = await Promise.all([
     db
       .select()
       .from(prayerDays)
@@ -53,11 +54,16 @@ export async function GET() {
       .from(worshipLog)
       .where(eq(worshipLog.userId, user.id))
       .orderBy(asc(worshipLog.prayerDate)),
+    db
+      .select()
+      .from(quranLog)
+      .where(eq(quranLog.userId, user.id))
+      .orderBy(asc(quranLog.prayerDate)),
   ]);
 
   const payload = {
     format: "qada-tracker-export",
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     account: {
       username: user.username,
@@ -114,6 +120,11 @@ export async function GET() {
       date: entry.prayerDate,
       kind: entry.kind,
       count: entry.count,
+      loggedAt: entry.loggedAt,
+    })),
+    quran: quran.map((entry) => ({
+      date: entry.prayerDate,
+      surah: entry.surah,
       loggedAt: entry.loggedAt,
     })),
   };

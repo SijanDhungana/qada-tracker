@@ -16,8 +16,11 @@ import {
   type WorshipCounts,
   type WorshipKind,
 } from "@/lib/worship";
+import { describeSurahs, surahByNumber } from "@/lib/quran";
 import { formatDateKey, shiftDateKey } from "@/lib/time";
 import { bumpWorship, clearWorshipDay, setWorship } from "@/lib/actions/worship";
+import { clearSurahDay, setSurahs as setSurahsAction } from "@/lib/actions/quran";
+import { SurahPicker } from "./SurahPicker";
 import { Sheet } from "./ui/Sheet";
 import { useToast } from "./ui/Toast";
 
@@ -27,6 +30,8 @@ export type WorshipData = {
   counts: WorshipCounts;
   /** Totals across the last seven days, for the context line at the top. */
   weekCounts: WorshipCounts;
+  /** Surah numbers read on this day. */
+  surahs: number[];
 };
 
 /**
@@ -41,7 +46,9 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
   const toast = useToast();
 
   const [counts, setCounts] = useState<WorshipCounts>(data.counts);
+  const [surahs, setSurahs] = useState<number[]>(data.surahs);
   const [adding, setAdding] = useState(false);
+  const [pickingSurahs, setPickingSurahs] = useState(false);
   const [editing, setEditing] = useState<WorshipKind | null>(null);
   const [clearOpen, setClearOpen] = useState(false);
   const [, startTransition] = useTransition();
@@ -49,7 +56,44 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
   // A different day was navigated to, or the server sent fresh numbers.
   useEffect(() => {
     setCounts(data.counts);
-  }, [data.counts, data.dateKey]);
+    setSurahs(data.surahs);
+  }, [data.counts, data.surahs, data.dateKey]);
+
+  function saveSurahs(next: number[]) {
+    const previous = surahs;
+    setSurahs(next);
+    setPickingSurahs(false);
+
+    startTransition(async () => {
+      const result = await setSurahsAction(data.dateKey, next).catch(() => ({
+        ok: false as const,
+        error: "Couldn't save that. Check your connection.",
+      }));
+
+      if (!result.ok) {
+        setSurahs(previous);
+        toast({ message: result.error, tone: "danger" });
+        return;
+      }
+
+      toast({
+        message:
+          next.length === 0
+            ? "Surahs cleared"
+            : `Qur'an · ${describeSurahs(next)}`,
+        coalesceKey: "surahs",
+        action: {
+          label: "Undo",
+          run: async () => {
+            setSurahs(previous);
+            await setSurahsAction(data.dateKey, previous);
+            router.refresh();
+          },
+        },
+      });
+      router.refresh();
+    });
+  }
 
   function add(kind: WorshipKind, amount: number) {
     const previous = counts[kind] ?? 0;
@@ -108,18 +152,26 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
   }
 
   function clearDay() {
-    const previous = counts;
+    const previousCounts = counts;
+    const previousSurahs = surahs;
     setCounts({});
+    setSurahs([]);
     setClearOpen(false);
 
     startTransition(async () => {
-      const result = await clearWorshipDay(data.dateKey).catch(() => ({
-        ok: false as const,
-        error: "Couldn't clear that day.",
-      }));
-      if (!result.ok) {
-        setCounts(previous);
-        toast({ message: result.error, tone: "danger" });
+      const results = await Promise.all(
+        [clearWorshipDay(data.dateKey), clearSurahDay(data.dateKey)].map((write) =>
+          write.catch(() => ({ ok: false as const, error: "Couldn't clear that day." })),
+        ),
+      );
+      const failure = results.find((result) => !result.ok);
+      if (failure) {
+        setCounts(previousCounts);
+        setSurahs(previousSurahs);
+        toast({
+          message: "error" in failure ? failure.error : "Couldn't clear that day.",
+          tone: "danger",
+        });
         return;
       }
       toast({ message: "Day cleared" });
@@ -131,6 +183,8 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
   const dhikrToday = totalDhikr(counts);
   const dhikrWeek = totalDhikr(data.weekCounts);
   const logged = WORSHIP_KINDS.filter((kind) => (counts[kind] ?? 0) > 0);
+  // Surahs are their own entry on the day, alongside the counted kinds.
+  const entryCount = logged.length + (surahs.length > 0 ? 1 : 0);
 
   function goTo(dateKey: string) {
     if (dateKey > data.today) return;
@@ -162,9 +216,9 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
             {isToday ? "Today" : formatDateKey(data.dateKey)}
           </p>
           <p className="text-meta text-ink-3">
-            {logged.length === 0
+            {entryCount === 0
               ? "Nothing logged yet"
-              : `${logged.length} ${logged.length === 1 ? "thing" : "things"} logged`}
+              : `${entryCount} ${entryCount === 1 ? "thing" : "things"} logged`}
           </p>
         </div>
         <button
@@ -189,7 +243,7 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
         Log worship
       </button>
 
-      {logged.length === 0 ? (
+      {entryCount === 0 ? (
         <p className="rounded-lg border border-dashed border-line px-5 py-8 text-center text-body text-ink-3">
           Nothing logged for this day yet. Tap the button above to add nafl
           rak&apos;ahs, dhikr, or Qur&apos;an.
@@ -199,6 +253,42 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
           <h2 id="logged-heading" className="display text-section text-ink">
             {isToday ? "Today" : formatDateKey(data.dateKey, false)}
           </h2>
+
+          {surahs.length > 0 ? (
+            <div className="rounded-md border border-line bg-surface px-3 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                <div className="min-w-32 flex-1">
+                  <p className="text-name font-medium text-ink">Surahs read</p>
+                  <p className="text-meta text-ink-3">
+                    <span className="num">{surahs.length}</span>{" "}
+                    {surahs.length === 1 ? "surah" : "surahs"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPickingSurahs(true)}
+                  className="min-h-11 shrink-0 rounded-md border border-line px-3 text-meta font-medium text-ink-2 hover:bg-surface-2"
+                >
+                  Change
+                </button>
+              </div>
+
+              <ul aria-label="Surahs read" className="mt-2.5 flex flex-wrap gap-1.5">
+                {[...surahs]
+                  .sort((a, b) => a - b)
+                  .map((number) => (
+                    <li
+                      key={number}
+                      className="rounded-md border border-done/40 bg-done-wash px-2.5 py-1 text-meta font-medium text-done"
+                    >
+                      <span className="num">{number}</span>.{" "}
+                      {surahByNumber(number)?.name ?? "Unknown"}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
+
           <ul className="flex flex-col gap-2">
             {logged.map((kind) => (
               <li
@@ -275,6 +365,17 @@ export function WorshipScreen({ data }: { data: WorshipData }) {
           add(kind, amount);
           setAdding(false);
         }}
+        onPickSurahs={() => {
+          setAdding(false);
+          setPickingSurahs(true);
+        }}
+      />
+
+      <SurahPicker
+        open={pickingSurahs}
+        initial={surahs}
+        onClose={() => setPickingSurahs(false)}
+        onSave={saveSurahs}
       />
 
       <ExactSheet
@@ -323,10 +424,13 @@ function AddSheet({
   open,
   onClose,
   onAdd,
+  onPickSurahs,
 }: {
   open: boolean;
   onClose: () => void;
   onAdd: (kind: WorshipKind, amount: number) => void;
+  /** Surahs skip the amount step — you choose which ones, not how many. */
+  onPickSurahs: () => void;
 }) {
   const [kind, setKind] = useState<WorshipKind | null>(null);
   const [text, setText] = useState("");
@@ -374,6 +478,26 @@ function AddSheet({
                 aria-label={GROUP_LABELS[group]}
                 className="flex flex-col gap-2"
               >
+                {group === "quran" ? (
+                  <button
+                    type="button"
+                    onClick={onPickSurahs}
+                    className="flex min-h-12 items-center justify-between gap-3 rounded-md border border-line bg-surface-2 px-3 py-2.5 text-left hover:border-brand"
+                  >
+                    <span>
+                      <span className="block text-body font-medium text-ink">
+                        Surahs read
+                      </span>
+                      <span className="block text-meta text-ink-3">
+                        Pick which surahs, by name or number
+                      </span>
+                    </span>
+                    <span aria-hidden="true" className="shrink-0 text-ink-3">
+                      ›
+                    </span>
+                  </button>
+                ) : null}
+
                 {kindsInGroup(group).map((option) => (
                   <button
                     key={option}

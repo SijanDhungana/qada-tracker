@@ -15,7 +15,8 @@ export const WORSHIP_KINDS = [
   "tahlil",
   "durood",
   "astaghfirullah",
-  "quran_surah",
+  // Surahs are not here: which surah was read is a set of names, not a number,
+  // so it lives in quran_log. Juz stay a count, where a count is the point.
   "quran_juz",
 ] as const;
 
@@ -115,15 +116,6 @@ export const WORSHIP: Record<WorshipKind, WorshipDefinition> = {
     step: 1,
     quickAdds: [33, 100],
   },
-  quran_surah: {
-    kind: "quran_surah",
-    group: "quran",
-    label: "Surahs read",
-    sub: null,
-    unit: ["surah", "surahs"],
-    step: 1,
-    quickAdds: [],
-  },
   quran_juz: {
     kind: "quran_juz",
     group: "quran",
@@ -182,7 +174,10 @@ export function totalDhikr(counts: WorshipCounts): number {
 }
 
 /** A one-line summary for the card on Today: the parts that actually happened. */
-export function summariseDay(counts: WorshipCounts): string | null {
+export function summariseDay(
+  counts: WorshipCounts,
+  surahsRead = 0,
+): string | null {
   const parts: string[] = [];
 
   const nafl = counts.nafl_rakah ?? 0;
@@ -191,8 +186,9 @@ export function summariseDay(counts: WorshipCounts): string | null {
   const dhikr = totalDhikr(counts);
   if (dhikr > 0) parts.push(`${dhikr.toLocaleString()} dhikr`);
 
-  const surahs = counts.quran_surah ?? 0;
-  if (surahs > 0) parts.push(describeCount("quran_surah", surahs));
+  if (surahsRead > 0) {
+    parts.push(`${surahsRead} ${surahsRead === 1 ? "surah" : "surahs"}`);
+  }
 
   const juz = counts.quran_juz ?? 0;
   if (juz > 0) parts.push(describeCount("quran_juz", juz));

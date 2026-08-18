@@ -1,6 +1,6 @@
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, asc, eq, gte, lte } from "drizzle-orm";
 import { db } from "@/db";
-import { worshipLog } from "@/db/schema";
+import { quranLog, worshipLog } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import { shiftDateKey, todayKeyInZone } from "@/lib/time";
 import {
@@ -37,20 +37,30 @@ export default async function WorshipPage({
   const weekStart = shiftDateKey(todayKey, -6);
   const windowStart = dateKey < weekStart ? dateKey : weekStart;
 
-  const rows = await db
-    .select({
-      prayerDate: worshipLog.prayerDate,
-      kind: worshipLog.kind,
-      count: worshipLog.count,
-    })
-    .from(worshipLog)
-    .where(
-      and(
-        eq(worshipLog.userId, user.id),
-        gte(worshipLog.prayerDate, windowStart),
-        lte(worshipLog.prayerDate, todayKey),
+  const [rows, surahRows] = await Promise.all([
+    db
+      .select({
+        prayerDate: worshipLog.prayerDate,
+        kind: worshipLog.kind,
+        count: worshipLog.count,
+      })
+      .from(worshipLog)
+      .where(
+        and(
+          eq(worshipLog.userId, user.id),
+          gte(worshipLog.prayerDate, windowStart),
+          lte(worshipLog.prayerDate, todayKey),
+        ),
       ),
-    );
+
+    db
+      .select({ surah: quranLog.surah })
+      .from(quranLog)
+      .where(
+        and(eq(quranLog.userId, user.id), eq(quranLog.prayerDate, dateKey)),
+      )
+      .orderBy(asc(quranLog.surah)),
+  ]);
 
   const values = rows.map((row) => ({
     prayerDate: row.prayerDate,
@@ -69,6 +79,7 @@ export default async function WorshipPage({
     today: todayKey,
     counts: countsFor(values, dateKey),
     weekCounts,
+    surahs: surahRows.map((row) => row.surah),
   };
 
   return (

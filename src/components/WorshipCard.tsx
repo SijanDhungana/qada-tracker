@@ -8,8 +8,14 @@ import { summariseDay, type WorshipCounts } from "@/lib/worship";
  * screen where it's logged. The counters live on their own page because a
  * tasbih is dozens of taps and Today is already a long screen.
  */
-export function WorshipCard({ counts }: { counts: WorshipCounts }) {
-  const summary = summariseDay(counts);
+export function WorshipCard({
+  counts,
+  surahsRead,
+}: {
+  counts: WorshipCounts;
+  surahsRead: number;
+}) {
+  const summary = summariseDay(counts, surahsRead);
 
   return (
     <section aria-labelledby="worship-heading" className="flex flex-col gap-3">
