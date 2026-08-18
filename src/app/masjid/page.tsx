@@ -1,8 +1,15 @@
 import { and, desc, eq, gte } from "drizzle-orm";
 import { db } from "@/db";
-import { dailyWitr, masjidPrayers, sunnahLog, tahajjudNights } from "@/db/schema";
+import {
+  dailyWitr,
+  duhaPrayers,
+  masjidPrayers,
+  sunnahLog,
+  tahajjudNights,
+} from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import type { DailyPrayerKey } from "@/lib/prayers";
+import type { DuhaEntry, DuhaStatus } from "@/lib/duha";
 import type { MasjidEntry, MasjidStatus, MasjidTiming } from "@/lib/masjid";
 import type { SunnahEntry, SunnahPart } from "@/lib/sunnah";
 import type { TahajjudEntry, TahajjudStatus } from "@/lib/tahajjud";
@@ -21,7 +28,7 @@ export default async function MasjidPage() {
   const todayKey = todayKeyInZone(user.timezone);
   const cutoff = shiftDateKey(todayKey, -89);
 
-  const [rows, tahajjudRows, witrRows, sunnahRows] = await Promise.all([
+  const [rows, tahajjudRows, witrRows, sunnahRows, duhaRows] = await Promise.all([
     db
       .select({
         prayerDate: masjidPrayers.prayerDate,
@@ -79,6 +86,17 @@ export default async function MasjidPage() {
       .from(sunnahLog)
       .where(and(eq(sunnahLog.userId, user.id), gte(sunnahLog.prayerDate, cutoff)))
       .orderBy(desc(sunnahLog.prayerDate)),
+
+    db
+      .select({
+        prayerDate: duhaPrayers.prayerDate,
+        status: duhaPrayers.status,
+        rakahs: duhaPrayers.rakahs,
+        loggedAt: duhaPrayers.loggedAt,
+      })
+      .from(duhaPrayers)
+      .where(and(eq(duhaPrayers.userId, user.id), gte(duhaPrayers.prayerDate, cutoff)))
+      .orderBy(desc(duhaPrayers.prayerDate)),
   ]);
 
   const entries: MasjidEntry[] = rows.map((row) => ({
@@ -113,6 +131,13 @@ export default async function MasjidPage() {
     loggedAt: row.loggedAt.toISOString(),
   }));
 
+  const duha: DuhaEntry[] = duhaRows.map((row) => ({
+    prayerDate: row.prayerDate,
+    status: row.status as DuhaStatus,
+    rakahs: row.rakahs,
+    loggedAt: row.loggedAt.toISOString(),
+  }));
+
   return (
     <AppShell username={user.username} theme={user.theme}>
       <MasjidHistory
@@ -120,10 +145,12 @@ export default async function MasjidPage() {
         tahajjud={tahajjud}
         witr={witr}
         sunnah={sunnah}
+        duha={duha}
         trackTahajjud={user.trackTahajjud}
         trackTahajjudRakahs={user.trackTahajjudRakahs}
         trackWitr={user.trackWitr}
         trackSunnah={user.trackSunnah}
+        trackDuha={user.trackDuha}
         today={todayKey}
       />
     </AppShell>

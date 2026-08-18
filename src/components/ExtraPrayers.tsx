@@ -10,9 +10,19 @@ import {
   type TahajjudEntry,
   type TahajjudStatus,
 } from "@/lib/tahajjud";
+import {
+  DEFAULT_DUHA_RAKAHS,
+  DUHA_LABELS,
+  DUHA_RAKAH_STEP,
+  DUHA_STATUSES,
+  MAX_DUHA_RAKAHS,
+  type DuhaEntry,
+  type DuhaStatus,
+} from "@/lib/duha";
 import { WITR_LABELS, WITR_STATUSES, type WitrEntry, type WitrStatus } from "@/lib/witr";
 import { formatTimeInZone } from "@/lib/time";
 import { clearTahajjud, recordTahajjud } from "@/lib/actions/tahajjud";
+import { clearDuha, recordDuha } from "@/lib/actions/duha";
 import { clearWitr, recordWitr } from "@/lib/actions/witr";
 import { useToast } from "./ui/Toast";
 
@@ -20,49 +30,66 @@ const CHIP =
   "min-h-11 rounded-md border px-3 text-meta font-medium transition-colors";
 const CHIP_IDLE =
   "border-line bg-surface text-ink-3 hover:bg-surface-2 hover:text-ink-2";
+const PRAYED = "border-done bg-done-wash text-done";
+const NOT_PRAYED = "border-line-strong bg-surface-2 text-ink-2";
 
 const WITR_STYLES: Record<WitrStatus, string> = {
-  prayed: "border-done bg-done-wash text-done",
-  missed: "border-line-strong bg-surface-2 text-ink-2",
+  prayed: PRAYED,
+  missed: NOT_PRAYED,
+};
+
+const DUHA_STYLES: Record<DuhaStatus, string> = {
+  prayed: PRAYED,
+  missed: NOT_PRAYED,
 };
 
 const TAHAJJUD_STYLES: Record<TahajjudStatus, string> = {
-  prayed: "border-done bg-done-wash text-done",
+  prayed: PRAYED,
   woke: "border-line-strong bg-surface-2 text-ink",
-  slept: "border-line-strong bg-surface-2 text-ink-2",
+  slept: NOT_PRAYED,
 };
 
 /**
- * Witr and Tahajjud, the two prayers of the night that aren't prayed in
- * congregation. They sit together and below the masjid strip, so the five
- * fard prayers stay the first thing on the screen.
+ * The prayers outside the five fard ones: Duha in the forenoon, Witr at night,
+ * Tahajjud in the last part of it. In that order, so the section reads down
+ * the day, and below the masjid strip so the five stay first on the screen.
+ *
+ * The heading avoids calling them "voluntary": Witr is wajib in the Hanafi
+ * school, and the app has no business ruling on that in a section title.
  */
-export function NightStrip({
+export function ExtraPrayers({
   today,
   timezone,
+  trackDuha,
   trackWitr,
   trackTahajjud,
   trackTahajjudRakahs,
+  initialDuha,
   initialWitr,
   initialTahajjud,
 }: {
   today: string;
   timezone: string;
+  trackDuha: boolean;
   trackWitr: boolean;
   trackTahajjud: boolean;
   trackTahajjudRakahs: boolean;
+  initialDuha: DuhaEntry | null;
   initialWitr: WitrEntry | null;
   initialTahajjud: TahajjudEntry | null;
 }) {
-  if (!trackWitr && !trackTahajjud) return null;
+  if (!trackDuha && !trackWitr && !trackTahajjud) return null;
 
   return (
-    <section aria-labelledby="night-heading" className="flex flex-col gap-3">
-      <h2 id="night-heading" className="display text-section text-ink">
-        Night prayers
+    <section aria-labelledby="extra-heading" className="flex flex-col gap-3">
+      <h2 id="extra-heading" className="display text-section text-ink">
+        Beyond the five
       </h2>
 
       <ul className="flex flex-col gap-2">
+        {trackDuha ? (
+          <DuhaRow today={today} timezone={timezone} initialEntry={initialDuha} />
+        ) : null}
         {trackWitr ? (
           <WitrRow today={today} timezone={timezone} initialEntry={initialWitr} />
         ) : null}
@@ -111,6 +138,168 @@ function Row({
       </div>
       {detail}
     </li>
+  );
+}
+
+/** Shared by Duha and Tahajjud — both count in pairs and both start at two. */
+function RakahStepper({
+  label,
+  value,
+  step,
+  max,
+  disabled,
+  onStep,
+}: {
+  label: string;
+  value: number;
+  step: number;
+  max: number;
+  disabled: boolean;
+  onStep: (direction: 1 | -1) => void;
+}) {
+  return (
+    <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-line pt-2.5">
+      <p className="text-meta text-ink-3">How many rak&apos;ahs?</p>
+      <div role="group" aria-label={label} className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onStep(-1)}
+          disabled={disabled || value <= step}
+          aria-label="Fewer rak'ahs"
+          className="grid size-11 place-items-center rounded-md border border-line text-ink-2 hover:bg-surface-2 disabled:opacity-40"
+        >
+          −
+        </button>
+        <span className="num w-8 text-center text-name text-ink" aria-live="polite">
+          {value}
+        </span>
+        <button
+          type="button"
+          onClick={() => onStep(1)}
+          disabled={disabled || value >= max}
+          aria-label="More rak'ahs"
+          className="grid size-11 place-items-center rounded-md border border-line text-ink-2 hover:bg-surface-2 disabled:opacity-40"
+        >
+          +
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Prayed or not, and on a day it was prayed, how many rak'ahs. */
+function DuhaRow({
+  today,
+  timezone,
+  initialEntry,
+}: {
+  today: string;
+  timezone: string;
+  initialEntry: DuhaEntry | null;
+}) {
+  const toast = useToast();
+  const [entry, setEntry] = useState<DuhaEntry | null>(initialEntry);
+  const [pending, startTransition] = useTransition();
+
+  function save(next: DuhaEntry | null, message: string, notify = true) {
+    const previous = entry;
+    setEntry(next);
+
+    startTransition(async () => {
+      const result = await (next
+        ? recordDuha(today, next.status, next.rakahs)
+        : clearDuha(today)
+      ).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
+
+      if (!result.ok) {
+        setEntry(previous);
+        toast({ message: result.error, tone: "danger" });
+        return;
+      }
+      if (!notify) return;
+
+      toast({
+        message,
+        coalesceKey: "duha",
+        action: {
+          label: "Undo",
+          run: async () => {
+            setEntry(previous);
+            if (previous) await recordDuha(today, previous.status, previous.rakahs);
+            else await clearDuha(today);
+          },
+        },
+      });
+    });
+  }
+
+  function choose(status: DuhaStatus) {
+    if (entry?.status === status) {
+      save(null, "Duha cleared");
+      return;
+    }
+    save(
+      {
+        prayerDate: today,
+        status,
+        // Seed the count so the stepper opens on something sensible rather
+        // than making the user tap up from nothing.
+        rakahs: status === "prayed" ? DEFAULT_DUHA_RAKAHS : null,
+        loggedAt: new Date().toISOString(),
+      },
+      `Duha · ${DUHA_LABELS[status].toLowerCase()}`,
+    );
+  }
+
+  function stepRakahs(direction: 1 | -1) {
+    if (!entry || entry.status !== "prayed") return;
+    const current = entry.rakahs ?? DEFAULT_DUHA_RAKAHS;
+    const next = Math.min(
+      MAX_DUHA_RAKAHS,
+      Math.max(DUHA_RAKAH_STEP, current + direction * DUHA_RAKAH_STEP),
+    );
+    if (next === current) return;
+    // No toast: the number on screen is its own confirmation.
+    save({ ...entry, rakahs: next }, "", false);
+  }
+
+  return (
+    <Row
+      name="Duha"
+      when="Forenoon"
+      loggedAt={entry?.loggedAt ?? null}
+      timezone={timezone}
+      detail={
+        entry?.status === "prayed" ? (
+          <RakahStepper
+            label="Rak'ahs of duha"
+            value={entry.rakahs ?? DEFAULT_DUHA_RAKAHS}
+            step={DUHA_RAKAH_STEP}
+            max={MAX_DUHA_RAKAHS}
+            disabled={pending}
+            onStep={stepRakahs}
+          />
+        ) : null
+      }
+    >
+      <div role="group" aria-label="Duha today" className="flex gap-1.5">
+        {DUHA_STATUSES.map((status) => {
+          const selected = entry?.status === status;
+          return (
+            <button
+              key={status}
+              type="button"
+              aria-pressed={selected}
+              disabled={pending}
+              onClick={() => choose(status)}
+              className={`${CHIP} ${selected ? DUHA_STYLES[status] : CHIP_IDLE}`}
+            >
+              {DUHA_LABELS[status]}
+            </button>
+          );
+        })}
+      </div>
+    </Row>
   );
 }
 
@@ -289,8 +478,6 @@ function TahajjudRow({
       {
         prayerDate: today,
         status,
-        // Seed the count so the stepper opens on something sensible rather
-        // than making the user tap up from nothing.
         rakahs: askRakahs && status === "prayed" ? DEFAULT_TAHAJJUD_RAKAHS : null,
         loggedAt: new Date().toISOString(),
       },
@@ -306,13 +493,8 @@ function TahajjudRow({
       Math.max(TAHAJJUD_RAKAH_STEP, current + direction * TAHAJJUD_RAKAH_STEP),
     );
     if (next === current) return;
-    // No toast: the number on screen is its own confirmation, and a stepper
-    // fires often enough that a toast per tap would be noise.
     save({ ...entry, rakahs: next }, "", false);
   }
-
-  const showRakahs = askRakahs && entry?.status === "prayed";
-  const rakahs = entry?.rakahs ?? DEFAULT_TAHAJJUD_RAKAHS;
 
   return (
     <Row
@@ -321,40 +503,15 @@ function TahajjudRow({
       loggedAt={entry?.loggedAt ?? null}
       timezone={timezone}
       detail={
-        showRakahs ? (
-          <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-line pt-2.5">
-            <p className="text-meta text-ink-3">How many rak&apos;ahs?</p>
-            <div
-              role="group"
-              aria-label="Rak'ahs of tahajjud"
-              className="flex shrink-0 items-center gap-2"
-            >
-              <button
-                type="button"
-                onClick={() => stepRakahs(-1)}
-                disabled={pending || rakahs <= TAHAJJUD_RAKAH_STEP}
-                aria-label="Fewer rak'ahs"
-                className="grid size-11 place-items-center rounded-md border border-line text-ink-2 hover:bg-surface-2 disabled:opacity-40"
-              >
-                −
-              </button>
-              <span
-                className="num w-8 text-center text-name text-ink"
-                aria-live="polite"
-              >
-                {rakahs}
-              </span>
-              <button
-                type="button"
-                onClick={() => stepRakahs(1)}
-                disabled={pending || rakahs >= MAX_TAHAJJUD_RAKAHS}
-                aria-label="More rak'ahs"
-                className="grid size-11 place-items-center rounded-md border border-line text-ink-2 hover:bg-surface-2 disabled:opacity-40"
-              >
-                +
-              </button>
-            </div>
-          </div>
+        askRakahs && entry?.status === "prayed" ? (
+          <RakahStepper
+            label="Rak'ahs of tahajjud"
+            value={entry.rakahs ?? DEFAULT_TAHAJJUD_RAKAHS}
+            step={TAHAJJUD_RAKAH_STEP}
+            max={MAX_TAHAJJUD_RAKAHS}
+            disabled={pending}
+            onStep={stepRakahs}
+          />
         ) : null
       }
     >

@@ -25,6 +25,16 @@ import {
   type TahajjudStatus,
 } from "@/lib/tahajjud";
 import {
+  DEFAULT_DUHA_RAKAHS,
+  DUHA_LABELS,
+  DUHA_RAKAH_STEP,
+  DUHA_STATUSES,
+  MAX_DUHA_RAKAHS,
+  summariseDuha,
+  type DuhaEntry,
+  type DuhaStatus,
+} from "@/lib/duha";
+import {
   describeParts,
   hasParts,
   partsFor,
@@ -44,6 +54,7 @@ import { clearMasjidPrayer, recordMasjidPrayer } from "@/lib/actions/masjid";
 import { clearTahajjud, recordTahajjud } from "@/lib/actions/tahajjud";
 import { clearSunnah, saveSunnahParts } from "@/lib/actions/sunnah";
 import { clearWitr, recordWitr } from "@/lib/actions/witr";
+import { clearDuha, recordDuha } from "@/lib/actions/duha";
 import { PrayerSheet, type SheetSave, type SheetTarget } from "./PrayerSheet";
 import { SegmentedControl } from "./ui/SegmentedControl";
 import { useToast } from "./ui/Toast";
@@ -75,20 +86,24 @@ export function MasjidHistory({
   tahajjud: initialTahajjud,
   witr: initialWitr,
   sunnah: initialSunnah,
+  duha: initialDuha,
   trackTahajjud,
   trackTahajjudRakahs,
   trackWitr,
   trackSunnah,
+  trackDuha,
   today,
 }: {
   entries: MasjidEntry[];
   tahajjud: TahajjudEntry[];
   witr: WitrEntry[];
   sunnah: SunnahEntry[];
+  duha: DuhaEntry[];
   trackTahajjud: boolean;
   trackTahajjudRakahs: boolean;
   trackWitr: boolean;
   trackSunnah: boolean;
+  trackDuha: boolean;
   today: string;
 }) {
   const router = useRouter();
@@ -106,6 +121,9 @@ export function MasjidHistory({
   // Keyed "date:prayer:part" so one prayer's parts stay independent.
   const [sunnahDays, setSunnahDays] = useState<Record<string, SunnahEntry>>(() =>
     Object.fromEntries(initialSunnah.map((entry) => [partKey(entry), entry])),
+  );
+  const [duhaDays, setDuhaDays] = useState<Record<string, DuhaEntry>>(() =>
+    Object.fromEntries(initialDuha.map((entry) => [entry.prayerDate, entry])),
   );
   const [target, setTarget] = useState<SheetTarget | null>(null);
   const [, startTransition] = useTransition();
@@ -401,6 +419,69 @@ export function MasjidHistory({
     [nights, cutoff],
   );
 
+  /** Writes one day's duha, or clears it when `entry` is null. */
+  function writeDuha(dateKey: string, entry: DuhaEntry | null) {
+    const previous = duhaDays[dateKey];
+
+    setDuhaDays((current) => {
+      const next = { ...current };
+      if (entry) next[dateKey] = entry;
+      else delete next[dateKey];
+      return next;
+    });
+
+    startTransition(async () => {
+      const result = await (entry
+        ? recordDuha(dateKey, entry.status, entry.rakahs)
+        : clearDuha(dateKey)
+      ).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
+
+      if (!result.ok) {
+        setDuhaDays((current) => {
+          const next = { ...current };
+          if (previous) next[dateKey] = previous;
+          else delete next[dateKey];
+          return next;
+        });
+        toast({ message: result.error, tone: "danger" });
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  function saveDuhaDay(dateKey: string, status: DuhaStatus) {
+    const previous = duhaDays[dateKey];
+    if (previous?.status === status) {
+      writeDuha(dateKey, null);
+      return;
+    }
+    writeDuha(dateKey, {
+      prayerDate: dateKey,
+      status,
+      rakahs:
+        status === "prayed" ? (previous?.rakahs ?? DEFAULT_DUHA_RAKAHS) : null,
+      loggedAt: new Date().toISOString(),
+    });
+  }
+
+  function stepDuhaRakahs(dateKey: string, direction: 1 | -1) {
+    const entry = duhaDays[dateKey];
+    if (!entry || entry.status !== "prayed") return;
+    const current = entry.rakahs ?? DEFAULT_DUHA_RAKAHS;
+    const next = Math.min(
+      MAX_DUHA_RAKAHS,
+      Math.max(DUHA_RAKAH_STEP, current + direction * DUHA_RAKAH_STEP),
+    );
+    if (next === current) return;
+    writeDuha(dateKey, { ...entry, rakahs: next });
+  }
+
+  const scopedDuha = useMemo(
+    () => Object.values(duhaDays).filter((entry) => entry.prayerDate >= cutoff),
+    [duhaDays, cutoff],
+  );
+
   const scopedWitr = useMemo(
     () => Object.values(witrDays).filter((entry) => entry.prayerDate >= cutoff),
     [witrDays, cutoff],
@@ -414,6 +495,7 @@ export function MasjidHistory({
   const summary = summarise(scoped);
   const nightSummary = summariseTahajjud(scopedNights);
   const witrSummary = summariseWitr(scopedWitr);
+  const duhaSummary = summariseDuha(scopedDuha);
   const sunnahSummary = summariseSunnah(scopedSunnah);
   const reasons = topReasons(scoped);
   const hardest = hardestPrayer(scoped);
@@ -582,7 +664,11 @@ export function MasjidHistory({
         sunnah still has something worth summarising, and gating these on
         masjid entries would leave their screen permanently empty.
       */}
-      {nightSummary.logged + witrSummary.logged + sunnahSummary.logged > 0 ? (
+      {nightSummary.logged +
+        witrSummary.logged +
+        sunnahSummary.logged +
+        duhaSummary.logged >
+      0 ? (
         <div className="grid gap-3 sm:grid-cols-2">
           {trackTahajjud && nightSummary.logged > 0 ? (
             <section className="rounded-lg border border-line bg-surface p-5">
@@ -601,6 +687,26 @@ export function MasjidHistory({
                   rak&apos;ahs in all
                 </p>
               ) : null}
+            </section>
+          ) : null}
+
+          {trackDuha && duhaSummary.logged > 0 ? (
+            <section className="rounded-lg border border-line bg-surface p-5">
+              <h2 className="text-body font-medium text-ink">Duha</h2>
+              <p className="num mt-2 text-counter leading-none text-ink">
+                {duhaSummary.prayed}
+              </p>
+              <p className="mt-1 text-meta text-ink-3">
+                {duhaSummary.prayed === 1 ? "day" : "days"} prayed, of{" "}
+                <span className="num">{duhaSummary.logged}</span> logged
+                {duhaSummary.rakahs > 0 ? (
+                  <>
+                    {" · "}
+                    <span className="num">{duhaSummary.rakahs}</span> rak&apos;ahs in
+                    all
+                  </>
+                ) : null}
+              </p>
             </section>
           ) : null}
 
@@ -641,7 +747,8 @@ export function MasjidHistory({
       {summary.logged +
         nightSummary.logged +
         witrSummary.logged +
-        sunnahSummary.logged ===
+        sunnahSummary.logged +
+        duhaSummary.logged ===
       0 ? (
         <p className="rounded-lg border border-dashed border-line px-5 py-8 text-center text-body text-ink-3">
           Nothing logged in this stretch yet. Tap any prayer below to fill it in.
@@ -803,6 +910,68 @@ export function MasjidHistory({
                           </button>
                         );
                       })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {trackDuha ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+                    <p className="text-meta text-ink-3">
+                      Duha
+                      {duhaDays[dateKey]?.status === "prayed" ? (
+                        <span className="num text-ink-2">
+                          {" · "}
+                          {duhaDays[dateKey].rakahs ?? DEFAULT_DUHA_RAKAHS}
+                        </span>
+                      ) : null}
+                    </p>
+                    <div className="flex items-center gap-1.5">
+                      {duhaDays[dateKey]?.status === "prayed" ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => stepDuhaRakahs(dateKey, -1)}
+                            aria-label={`Fewer rak'ahs of duha on ${formatDateKey(dateKey, false)}`}
+                            className="grid size-9 place-items-center rounded-md border border-line text-ink-2 hover:bg-surface-2"
+                          >
+                            −
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => stepDuhaRakahs(dateKey, 1)}
+                            aria-label={`More rak'ahs of duha on ${formatDateKey(dateKey, false)}`}
+                            className="grid size-9 place-items-center rounded-md border border-line text-ink-2 hover:bg-surface-2"
+                          >
+                            +
+                          </button>
+                        </>
+                      ) : null}
+                      <div
+                        role="group"
+                        aria-label={`Duha on ${formatDateKey(dateKey, false)}`}
+                        className="flex gap-1.5"
+                      >
+                        {DUHA_STATUSES.map((status) => {
+                          const selected = duhaDays[dateKey]?.status === status;
+                          return (
+                            <button
+                              key={status}
+                              type="button"
+                              aria-pressed={selected}
+                              onClick={() => saveDuhaDay(dateKey, status)}
+                              className={`min-h-11 rounded-md border px-3 text-meta font-medium transition-colors ${
+                                selected
+                                  ? status === "prayed"
+                                    ? "border-transparent bg-done text-done-ink"
+                                    : "border-transparent bg-surface-3 text-ink-2"
+                                  : "border-line bg-surface text-ink-3 hover:bg-surface-2 hover:text-ink-2"
+                              }`}
+                            >
+                              {DUHA_LABELS[status]}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
                 ) : null}

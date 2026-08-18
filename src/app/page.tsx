@@ -3,6 +3,7 @@ import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   dailyWitr,
+  duhaPrayers,
   masjidPrayers,
   prayerDays,
   quranLog,
@@ -13,6 +14,7 @@ import {
 import { requireUser } from "@/lib/session";
 import { ALL_PRAYERS, prayersFor, type PrayerKey } from "@/lib/prayers";
 import type { DailyPrayerKey } from "@/lib/prayers";
+import type { DuhaEntry, DuhaStatus } from "@/lib/duha";
 import type { MasjidEntry, MasjidStatus, MasjidTiming } from "@/lib/masjid";
 import type { SunnahEntry, SunnahPart } from "@/lib/sunnah";
 import type { TahajjudEntry, TahajjudStatus } from "@/lib/tahajjud";
@@ -91,6 +93,7 @@ export default async function TodayPage() {
     sunnahRows,
     worshipRows,
     surahRows,
+    duhaRows,
   ] = await Promise.all([
     db
       .select({
@@ -201,6 +204,19 @@ export default async function TodayPage() {
       .select({ surah: quranLog.surah })
       .from(quranLog)
       .where(and(eq(quranLog.userId, user.id), gte(quranLog.prayerDate, todayKey))),
+
+    db
+      .select({
+        prayerDate: duhaPrayers.prayerDate,
+        status: duhaPrayers.status,
+        rakahs: duhaPrayers.rakahs,
+        loggedAt: duhaPrayers.loggedAt,
+      })
+      .from(duhaPrayers)
+      .where(
+        and(eq(duhaPrayers.userId, user.id), gte(duhaPrayers.prayerDate, todayKey)),
+      )
+      .limit(1),
   ]);
 
   const perDay = counted.length;
@@ -236,6 +252,15 @@ export default async function TodayPage() {
         status: tahajjudRows[0].status as TahajjudStatus,
         rakahs: tahajjudRows[0].rakahs,
         loggedAt: tahajjudRows[0].loggedAt.toISOString(),
+      }
+    : null;
+
+  const duhaToday: DuhaEntry | null = duhaRows[0]
+    ? {
+        prayerDate: duhaRows[0].prayerDate,
+        status: duhaRows[0].status as DuhaStatus,
+        rakahs: duhaRows[0].rakahs,
+        loggedAt: duhaRows[0].loggedAt.toISOString(),
       }
     : null;
 
@@ -285,6 +310,8 @@ export default async function TodayPage() {
     sunnahToday,
     worshipToday,
     surahsToday: surahRows.length,
+    trackDuha: user.trackDuha,
+    duhaToday,
   };
 
   return (

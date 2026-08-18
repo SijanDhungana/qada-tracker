@@ -14,6 +14,7 @@ import {
   setDailyGoal,
   setTheme,
   setTimezone,
+  setTrackDuha,
   setTrackSunnah,
   setTrackTahajjud,
   setTrackTahajjudRakahs,
@@ -109,6 +110,7 @@ export function SettingsScreen({
   trackTahajjud,
   trackTahajjudRakahs,
   trackSunnah,
+  trackDuha,
   dailyGoal,
   theme,
   timezone,
@@ -121,6 +123,7 @@ export function SettingsScreen({
   trackTahajjud: boolean;
   trackTahajjudRakahs: boolean;
   trackSunnah: boolean;
+  trackDuha: boolean;
   dailyGoal: number;
   theme: string;
   timezone: string;
@@ -135,6 +138,7 @@ export function SettingsScreen({
   const [tahajjud, setTahajjud] = useState(trackTahajjud);
   const [tahajjudRakahs, setTahajjudRakahs] = useState(trackTahajjudRakahs);
   const [sunnah, setSunnah] = useState(trackSunnah);
+  const [duha, setDuha] = useState(trackDuha);
   const [goal, setGoal] = useState(dailyGoal);
   const [themeValue, setThemeValue] = useState(theme);
   const [zone, setZone] = useState(timezone);
@@ -291,6 +295,13 @@ export function SettingsScreen({
           note="Rak'ah counts follow the common Hanafi arrangement — 2 before Fajr, 4 before and 2 after Zuhr, and so on. They're labels on the buttons, never checks on your number, and none of it touches the qada count."
           checked={sunnah}
           onChange={(next) => saveToggle(next, setSunnah, setTrackSunnah)}
+        />
+        <ToggleRow
+          label="Track Duha"
+          summary="The forenoon prayer, from after sunrise until just before Zuhr."
+          note="Recorded as prayed or missed, and on a day you prayed it, how many rak'ahs — two and eight are both ordinary, so the number is the part worth keeping."
+          checked={duha}
+          onChange={(next) => saveToggle(next, setDuha, setTrackDuha)}
         />
         <ToggleRow
           label="Track Tahajjud"

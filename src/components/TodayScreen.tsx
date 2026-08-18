@@ -7,6 +7,7 @@ import { PRAYER_LABELS, prayersFor, type PrayerKey } from "@/lib/prayers";
 import { milestone, projectionSentence } from "@/lib/projection";
 import type { MasjidEntry } from "@/lib/masjid";
 import type { SunnahEntry } from "@/lib/sunnah";
+import type { DuhaEntry } from "@/lib/duha";
 import type { TahajjudEntry } from "@/lib/tahajjud";
 import type { WitrEntry } from "@/lib/witr";
 import type { WorshipCounts } from "@/lib/worship";
@@ -14,7 +15,7 @@ import { logPrayer, undoSlot, unlogLatest } from "@/lib/actions/log";
 import { PrayerCounter } from "./PrayerCounter";
 import { LedgerGrid, type GridDay } from "./LedgerGrid";
 import { MasjidStrip } from "./MasjidStrip";
-import { NightStrip } from "./NightStrip";
+import { ExtraPrayers } from "./ExtraPrayers";
 import { WorshipCard } from "./WorshipCard";
 import { Sheet } from "./ui/Sheet";
 import { useToast } from "./ui/Toast";
@@ -49,6 +50,8 @@ export type TodayData = {
   trackTahajjud: boolean;
   trackTahajjudRakahs: boolean;
   tahajjudToday: TahajjudEntry | null;
+  trackDuha: boolean;
+  duhaToday: DuhaEntry | null;
   witrToday: WitrEntry | null;
   trackSunnah: boolean;
   sunnahToday: SunnahEntry[];
@@ -332,13 +335,15 @@ export function TodayScreen({ data }: { data: TodayData }) {
         initialSunnah={data.sunnahToday}
       />
 
-      {/* 5. Witr and Tahajjud, each shown only if it's being tracked. */}
-      <NightStrip
+      {/* 5. Duha, Witr and Tahajjud, each shown only if it's being tracked. */}
+      <ExtraPrayers
         today={data.today}
         timezone={data.timezone}
+        trackDuha={data.trackDuha}
         trackWitr={data.trackWitr}
         trackTahajjud={data.trackTahajjud}
         trackTahajjudRakahs={data.trackTahajjudRakahs}
+        initialDuha={data.duhaToday}
         initialWitr={data.witrToday}
         initialTahajjud={data.tahajjudToday}
       />

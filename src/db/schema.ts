@@ -27,6 +27,8 @@ export const users = pgTable("users", {
   trackTahajjudRakahs: boolean("track_tahajjud_rakahs").notNull().default(false),
   /** Opt-in: a sunnah marker beside each of the five daily prayers. */
   trackSunnah: boolean("track_sunnah").notNull().default(false),
+  /** Opt-in: adds the forenoon prayer to the Today screen and its history. */
+  trackDuha: boolean("track_duha").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -128,6 +130,33 @@ export const tahajjudNights = pgTable(
   },
   (table) => [
     unique("tahajjud_nights_user_date_key").on(table.userId, table.prayerDate),
+  ],
+);
+
+/**
+ * The forenoon prayer. Its own table rather than a row in tahajjud_nights:
+ * the two ask different questions (Tahajjud has a "woke without praying"
+ * answer that daylight makes meaningless), and merging them would mean a
+ * status column whose valid values depend on a sibling column.
+ */
+export const duhaPrayers = pgTable(
+  "duha_prayers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    prayerDate: date("prayer_date").notNull(),
+    /** prayed | missed */
+    status: text("status").notNull(),
+    /** Only recorded on a day it was prayed. */
+    rakahs: integer("rakahs"),
+    loggedAt: timestamp("logged_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("duha_prayers_user_date_key").on(table.userId, table.prayerDate),
   ],
 );
 

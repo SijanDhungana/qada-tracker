@@ -76,6 +76,19 @@ export async function setTrackTahajjudRakahs(
   return { ok: true };
 }
 
+export async function setTrackDuha(value: boolean): Promise<SettingsResult> {
+  const user = await requireUser();
+  try {
+    await db.update(users).set({ trackDuha: value }).where(eq(users.id, user.id));
+  } catch {
+    return { ok: false, error: "Couldn't save that setting. Please try again." };
+  }
+  revalidatePath("/");
+  revalidatePath("/masjid");
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
 export async function setTrackSunnah(value: boolean): Promise<SettingsResult> {
   const user = await requireUser();
   try {

@@ -50,6 +50,13 @@
       "when": 1787038640575,
       "tag": "0006_perpetual_thundra",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787051931791,
+      "tag": "0007_hot_alex_wilder",
+      "breakpoints": true
     }
   ]
 }

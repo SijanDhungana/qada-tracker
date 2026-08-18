@@ -143,6 +143,8 @@ export async function GET() {
         "users.track_tahajjud",
         "users.track_tahajjud_rakahs",
         "users.track_sunnah",
+        "users.track_duha",
+        "duha_prayers.rakahs",
         "masjid_prayers.timing",
         "masjid_prayers.joined_rakah",
         "tahajjud_nights.rakahs",

@@ -2,6 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import {
   dailyWitr,
+  duhaPrayers,
   masjidPrayers,
   prayerDays,
   quranLog,
@@ -23,7 +24,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const user = await requireUser();
 
-  const [days, masjid, nights, witr, sunnah, worship, quran] = await Promise.all([
+  const [days, masjid, nights, witr, sunnah, worship, quran, duha] = await Promise.all([
     db
       .select()
       .from(prayerDays)
@@ -59,11 +60,16 @@ export async function GET() {
       .from(quranLog)
       .where(eq(quranLog.userId, user.id))
       .orderBy(asc(quranLog.prayerDate)),
+    db
+      .select()
+      .from(duhaPrayers)
+      .where(eq(duhaPrayers.userId, user.id))
+      .orderBy(asc(duhaPrayers.prayerDate)),
   ]);
 
   const payload = {
     format: "qada-tracker-export",
-    version: 3,
+    version: 4,
     exportedAt: new Date().toISOString(),
     account: {
       username: user.username,
@@ -71,6 +77,7 @@ export async function GET() {
       trackTahajjud: user.trackTahajjud,
       trackTahajjudRakahs: user.trackTahajjudRakahs,
       trackSunnah: user.trackSunnah,
+      trackDuha: user.trackDuha,
       dailyGoal: user.dailyGoal,
       theme: user.theme,
       timezone: user.timezone,
@@ -95,6 +102,12 @@ export async function GET() {
       timing: entry.timing,
       joinedRakah: entry.joinedRakah,
       reason: entry.reason,
+      loggedAt: entry.loggedAt,
+    })),
+    duha: duha.map((entry) => ({
+      date: entry.prayerDate,
+      status: entry.status,
+      rakahs: entry.rakahs,
       loggedAt: entry.loggedAt,
     })),
     tahajjud: nights.map((night) => ({
