@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PRAYER_LABELS, type DailyPrayerKey } from "@/lib/prayers";
 import {
   MASJID_STATUSES,
@@ -39,14 +39,13 @@ export type SheetTarget = {
 };
 
 export type SheetSave = {
-  /** Null when no fard status was chosen — the sunnah alone is being logged. */
+  /** Null when the fard answer was tapped off — the sunnah alone is logged. */
   masjid: {
     status: MasjidStatus;
     timing: MasjidTiming | null;
     joinedRakah: string | null;
     reason: string | null;
   } | null;
-  parts: PartAnswers;
 };
 
 const STATUS_STYLES: Record<MasjidStatus, string> = {
@@ -64,19 +63,26 @@ const chipOn = "border-brand bg-brand-wash text-brand";
  * One prayer in full: the voluntary rak'ahs before it, the fard itself, and
  * the voluntary rak'ahs after.
  *
- * Everything is staged and committed together by Save. Mixing instant toggles
- * with a Save button in the same sheet would leave the user unsure which of
- * their taps had already stuck.
+ * The sunnah answers write the moment they are tapped, like every other
+ * toggle in the app — an earlier version staged them behind the Save button,
+ * and closing the sheet any other way threw the answer away while the button
+ * still showed it selected.
+ *
+ * The fard block stays a small form, because its questions unfold one from
+ * the next, but it commits on any dismissal too rather than only on Save.
  */
 export function PrayerSheet({
   target,
   onClose,
   onSave,
+  onPart,
   onClear,
 }: {
   target: SheetTarget | null;
   onClose: () => void;
   onSave: (value: SheetSave) => void;
+  /** Fired as each voluntary block is answered; null means "unanswered". */
+  onPart: (part: SunnahPart, prayed: boolean | null) => void;
   onClear?: () => void;
 }) {
   const [status, setStatus] = useState<MasjidStatus | null>(null);
@@ -85,6 +91,11 @@ export function PrayerSheet({
   const [reason, setReason] = useState("");
   const [parts, setParts] = useState<PartAnswers>({});
 
+  // What the fard looked like when the sheet opened, so a dismissal only
+  // writes when something actually changed.
+  const opened = useRef("");
+  const committed = useRef(false);
+
   useEffect(() => {
     if (!target) return;
     setStatus(target.status ?? null);
@@ -92,6 +103,13 @@ export function PrayerSheet({
     setRakah(target.joinedRakah ?? null);
     setReason(target.reason ?? "");
     setParts(target.parts ?? {});
+    opened.current = JSON.stringify([
+      target.status ?? null,
+      target.timing ?? null,
+      target.joinedRakah ?? null,
+      target.reason ?? "",
+    ]);
+    committed.current = false;
   }, [target]);
 
   if (!target) {
@@ -111,39 +129,60 @@ export function PrayerSheet({
   const isLate = atMasjid && timing === "late";
   // A note explains being late, or not being at the masjid at all.
   const wantsReason = (status !== null && !atMasjid) || isLate;
-  // At the masjid you must say whether you made it from the start. With no
-  // status at all there is nothing to validate — the sunnah can stand alone.
-  const canSave = status === null || !atMasjid || timing !== null;
+  // The timing question is asked, not demanded. Refusing to commit without it
+  // would mean a user who taps "Masjid" and then dismisses loses the whole
+  // answer — the same silent loss the sunnah blocks used to have.
+  const timingUnanswered = atMasjid && timing === null;
 
   function togglePart(part: SunnahPart, prayed: boolean) {
+    // Tapping the current answer again returns the part to unanswered.
+    const next = parts[part] === prayed ? null : prayed;
     setParts((current) => {
-      const next = { ...current };
-      // Tapping the current answer again returns the part to unanswered.
-      if (next[part] === prayed) delete next[part];
-      else next[part] = prayed;
-      return next;
+      const updated = { ...current };
+      if (next === null) delete updated[part];
+      else updated[part] = next;
+      return updated;
     });
+    onPart(part, next);
   }
 
-  function submit() {
-    onSave({
-      masjid:
-        status === null
-          ? null
-          : {
-              status,
-              timing: atMasjid ? timing : null,
-              joinedRakah: isLate ? rakah : null,
-              reason: wantsReason ? reason.trim() || null : null,
-            },
-      parts,
-    });
+  /**
+   * Writes the fard block and closes. Runs on Save and on every other way out
+   * of the sheet, so an answer on screen is never one the record doesn't have.
+   */
+  function finish() {
+    if (committed.current) return;
+    committed.current = true;
+
+    const changed =
+      JSON.stringify([
+        status,
+        atMasjid ? timing : null,
+        isLate ? rakah : null,
+        wantsReason ? reason.trim() || null : "",
+      ]) !== opened.current;
+
+    if (changed) {
+      onSave({
+        masjid:
+          status === null
+            ? null
+            : {
+                status,
+                timing: atMasjid ? timing : null,
+                joinedRakah: isLate ? rakah : null,
+                reason: wantsReason ? reason.trim() || null : null,
+              },
+      });
+      return;
+    }
+    onClose();
   }
 
   return (
     <Sheet
       open
-      onClose={onClose}
+      onClose={finish}
       title={PRAYER_LABELS[target.prayer]}
       description={formatDateKey(target.dateKey)}
     >
@@ -239,6 +278,11 @@ export function PrayerSheet({
                   </button>
                 ))}
               </div>
+              {timingUnanswered ? (
+                <p className="mt-2 text-meta text-ink-3">
+                  Optional — it&apos;s saved either way.
+                </p>
+              ) : null}
             </div>
           ) : null}
 
@@ -344,11 +388,10 @@ export function PrayerSheet({
 
           <button
             type="button"
-            onClick={submit}
-            disabled={!canSave}
-            className="min-h-12 flex-1 rounded-md bg-brand text-body font-semibold text-done-ink disabled:opacity-50"
+            onClick={finish}
+            className="min-h-12 flex-1 rounded-md bg-brand text-body font-semibold text-done-ink"
           >
-            Save
+            Done
           </button>
         </div>
       </div>

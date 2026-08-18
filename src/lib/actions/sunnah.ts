@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import { db } from "@/db";
 import { sunnahLog } from "@/db/schema";
 import { requireUser } from "@/lib/session";
@@ -10,7 +10,6 @@ import { todayKeyInZone } from "@/lib/time";
 import {
   isSunnahPart,
   partsFor,
-  type PartAnswers,
   type SunnahEntry,
   type SunnahPart,
 } from "@/lib/sunnah";
@@ -70,85 +69,34 @@ export async function recordSunnah(
   }
 }
 
-/**
- * Writes every part of one prayer at once.
- *
- * The prayer sheet stages its answers and commits them together, so this takes
- * the whole set: a part answered becomes a row, a part left blank loses its
- * row. Doing it in one transaction means a half-saved prayer is not a state
- * the screen can end up in.
- */
-export async function saveSunnahParts(
+/** Clears one part, for when its answer is tapped off again. */
+export async function clearSunnahPart(
   prayerDate: string,
   prayer: DailyPrayerKey,
-  answers: PartAnswers,
+  part: SunnahPart,
 ): Promise<SunnahResult> {
   const user = await requireUser();
 
-  if (!DATE_RE.test(prayerDate)) {
-    return { ok: false, error: "That date doesn't look right." };
+  if (!DATE_RE.test(prayerDate) || !isDailyPrayerKey(prayer) || !isSunnahPart(part)) {
+    return { ok: false, error: "Couldn't find that entry." };
   }
-  if (!isDailyPrayerKey(prayer)) {
-    return { ok: false, error: "Unknown prayer." };
-  }
-  if (prayerDate > todayKeyInZone(user.timezone)) {
-    return { ok: false, error: "That day hasn't happened yet." };
-  }
-
-  // Only parts this prayer actually has; anything else is ignored rather than
-  // trusted, since the answers arrive from the client.
-  const known = partsFor(prayer).map((spec) => spec.part);
-  const setParts = known.filter((part) => typeof answers[part] === "boolean");
-  const clearParts = known.filter((part) => typeof answers[part] !== "boolean");
 
   try {
-    await db.transaction(async (tx) => {
-      if (setParts.length > 0) {
-        await tx
-          .insert(sunnahLog)
-          .values(
-            setParts.map((part) => ({
-              userId: user.id,
-              prayerDate,
-              prayer,
-              part,
-              prayed: answers[part] === true,
-              loggedAt: new Date(),
-            })),
-          )
-          .onConflictDoUpdate({
-            target: [
-              sunnahLog.userId,
-              sunnahLog.prayerDate,
-              sunnahLog.prayer,
-              sunnahLog.part,
-            ],
-            set: {
-              prayed: sql`excluded.prayed`,
-              loggedAt: new Date(),
-            },
-          });
-      }
-
-      if (clearParts.length > 0) {
-        await tx
-          .delete(sunnahLog)
-          .where(
-            and(
-              eq(sunnahLog.userId, user.id),
-              eq(sunnahLog.prayerDate, prayerDate),
-              eq(sunnahLog.prayer, prayer),
-              inArray(sunnahLog.part, clearParts),
-            ),
-          );
-      }
-    });
-
+    await db
+      .delete(sunnahLog)
+      .where(
+        and(
+          eq(sunnahLog.userId, user.id),
+          eq(sunnahLog.prayerDate, prayerDate),
+          eq(sunnahLog.prayer, prayer),
+          eq(sunnahLog.part, part),
+        ),
+      );
     revalidatePath("/");
     revalidatePath("/masjid");
     return { ok: true };
   } catch {
-    return { ok: false, error: "Couldn't save that. Check your connection." };
+    return { ok: false, error: "Couldn't remove that. Please try again." };
   }
 }
 

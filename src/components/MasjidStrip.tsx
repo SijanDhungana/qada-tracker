@@ -12,15 +12,17 @@ import {
   type MasjidStatus,
 } from "@/lib/masjid";
 import {
+  PART_LABELS,
   answersFor,
   describeParts,
   hasParts,
   type PartAnswers,
   type SunnahEntry,
+  type SunnahPart,
 } from "@/lib/sunnah";
 import { formatTimeInZone } from "@/lib/time";
 import { clearMasjidPrayer, recordMasjidPrayer } from "@/lib/actions/masjid";
-import { saveSunnahParts } from "@/lib/actions/sunnah";
+import { clearSunnahPart, recordSunnah } from "@/lib/actions/sunnah";
 import { PrayerSheet, type SheetSave, type SheetTarget } from "./PrayerSheet";
 import { useToast } from "./ui/Toast";
 
@@ -66,9 +68,44 @@ export function MasjidStrip({
   const [target, setTarget] = useState<SheetTarget | null>(null);
   const [pending, startTransition] = useTransition();
 
+  /**
+   * One voluntary block, written the moment it is tapped. Nothing waits for a
+   * Save button, so closing the sheet can never discard an answer the screen
+   * is already showing as chosen.
+   */
+  function savePart(prayer: DailyPrayerKey, part: SunnahPart, prayed: boolean | null) {
+    const previous = sunnah[prayer] ?? {};
+    const optimistic: PartAnswers = { ...previous };
+    if (prayed === null) delete optimistic[part];
+    else optimistic[part] = prayed;
+    setSunnah((current) => ({ ...current, [prayer]: optimistic }));
+
+    startTransition(async () => {
+      const result = await (prayed === null
+        ? clearSunnahPart(today, prayer, part)
+        : recordSunnah(today, prayer, part, prayed)
+      ).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
+
+      if (!result.ok) {
+        setSunnah((current) => ({ ...current, [prayer]: previous }));
+        toast({ message: result.error, tone: "danger" });
+        return;
+      }
+
+      toast({
+        message:
+          prayed === null
+            ? `${PRAYER_LABELS[prayer]} · ${PART_LABELS[part].toLowerCase()} cleared`
+            : `${PRAYER_LABELS[prayer]} · ${PART_LABELS[part].toLowerCase()} ${
+                prayed ? "prayed" : "missed"
+              }`,
+        coalesceKey: "sunnah",
+      });
+    });
+  }
+
   function save(prayer: DailyPrayerKey, value: SheetSave) {
     const previousEntry = entries[prayer];
-    const previousParts = sunnah[prayer] ?? {};
 
     const optimistic: MasjidEntry | null = value.masjid
       ? {
@@ -88,7 +125,6 @@ export function MasjidStrip({
       else delete next[prayer];
       return next;
     });
-    setSunnah((current) => ({ ...current, [prayer]: value.parts }));
 
     function rollback() {
       setEntries((current) => {
@@ -97,50 +133,29 @@ export function MasjidStrip({
         else delete next[prayer];
         return next;
       });
-      setSunnah((current) => ({ ...current, [prayer]: previousParts }));
     }
 
     startTransition(async () => {
-      const writes: Promise<{ ok: boolean; error?: string }>[] = [];
-
-      if (value.masjid) {
-        writes.push(
-          recordMasjidPrayer({
+      const result = await (value.masjid
+        ? recordMasjidPrayer({
             prayerDate: today,
             prayer,
             status: value.masjid.status,
             timing: value.masjid.timing,
             joinedRakah: value.masjid.joinedRakah,
             reason: value.masjid.reason,
-          }),
-        );
-      } else if (previousEntry) {
-        // The fard answer was tapped off, so its record goes with it.
-        writes.push(clearMasjidPrayer(today, prayer));
-      }
+          })
+        : clearMasjidPrayer(today, prayer)
+      ).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
 
-      if (trackSunnah && hasParts(prayer)) {
-        writes.push(saveSunnahParts(today, prayer, value.parts));
-      }
-
-      const results = await Promise.all(
-        writes.map((write) =>
-          write.catch(() => ({ ok: false, error: "Couldn't save that." })),
-        ),
-      );
-
-      const failure = results.find((result) => !result.ok);
-      if (failure) {
+      if (!result.ok) {
         rollback();
-        toast({
-          message: failure.error ?? "Couldn't save that.",
-          tone: "danger",
-        });
+        toast({ message: result.error, tone: "danger" });
         return;
       }
 
       toast({
-        message: summarise(prayer, optimistic, value.parts),
+        message: summarise(prayer, optimistic),
         coalesceKey: "prayer",
         action: {
           label: "Undo",
@@ -157,9 +172,6 @@ export function MasjidStrip({
               });
             } else {
               await clearMasjidPrayer(today, prayer);
-            }
-            if (trackSunnah && hasParts(prayer)) {
-              await saveSunnahParts(today, prayer, previousParts);
             }
           },
         },
@@ -286,29 +298,22 @@ export function MasjidStrip({
           if (target) save(target.prayer, value);
           setTarget(null);
         }}
+        onPart={(part, prayed) => {
+          if (target) savePart(target.prayer, part, prayed);
+        }}
       />
     </section>
   );
 }
 
-/** "Fajr · masjid, on time · sunnah 2" */
-function summarise(
-  prayer: DailyPrayerKey,
-  entry: MasjidEntry | null,
-  answers: PartAnswers,
-): string {
-  const parts: string[] = [];
-  if (entry) {
-    parts.push(
-      entry.status === "masjid" && entry.timing
-        ? `${STATUS_SHORT[entry.status].toLowerCase()}, ${TIMING_LABELS[entry.timing].toLowerCase()}`
-        : STATUS_SHORT[entry.status].toLowerCase(),
-    );
-  }
-  const sunnah = describeParts(prayer, answers);
-  if (sunnah) parts.push(`sunnah ${sunnah}`);
-  if (parts.length === 0) return `${PRAYER_LABELS[prayer]} cleared`;
-  return `${PRAYER_LABELS[prayer]} · ${parts.join(" · ")}`;
+/** "Fajr · masjid, on time" */
+function summarise(prayer: DailyPrayerKey, entry: MasjidEntry | null): string {
+  if (!entry) return `${PRAYER_LABELS[prayer]} cleared`;
+  const where =
+    entry.status === "masjid" && entry.timing
+      ? `${STATUS_SHORT[entry.status].toLowerCase()}, ${TIMING_LABELS[entry.timing].toLowerCase()}`
+      : STATUS_SHORT[entry.status].toLowerCase();
+  return `${PRAYER_LABELS[prayer]} · ${where}`;
 }
 
 /** The timing, rak'ah and note that sit under a logged row. */

@@ -35,12 +35,14 @@ import {
   type DuhaStatus,
 } from "@/lib/duha";
 import {
+  PART_LABELS,
   describeParts,
   hasParts,
   partsFor,
   summariseSunnah,
   type PartAnswers,
   type SunnahEntry,
+  type SunnahPart,
 } from "@/lib/sunnah";
 import {
   WITR_LABELS,
@@ -52,7 +54,7 @@ import {
 import { formatDateKey, shiftDateKey } from "@/lib/time";
 import { clearMasjidPrayer, recordMasjidPrayer } from "@/lib/actions/masjid";
 import { clearTahajjud, recordTahajjud } from "@/lib/actions/tahajjud";
-import { clearSunnah, saveSunnahParts } from "@/lib/actions/sunnah";
+import { clearSunnah, clearSunnahPart, recordSunnah } from "@/lib/actions/sunnah";
 import { clearWitr, recordWitr } from "@/lib/actions/witr";
 import { clearDuha, recordDuha } from "@/lib/actions/duha";
 import { PrayerSheet, type SheetSave, type SheetTarget } from "./PrayerSheet";
@@ -145,10 +147,62 @@ export function MasjidHistory({
     return list;
   }, [today, range]);
 
+  /**
+   * One voluntary block on one day, written as it is tapped rather than held
+   * until Save — closing the sheet must never drop an answer already shown.
+   */
+  function savePart(
+    dateKey: string,
+    prayer: DailyPrayerKey,
+    part: SunnahPart,
+    prayed: boolean | null,
+  ) {
+    const id = `${dateKey}:${prayer}:${part}`;
+    const previous = sunnahDays[id];
+
+    setSunnahDays((current) => {
+      const next = { ...current };
+      if (prayed === null) delete next[id];
+      else
+        next[id] = {
+          prayerDate: dateKey,
+          prayer,
+          part,
+          prayed,
+          loggedAt: new Date().toISOString(),
+        };
+      return next;
+    });
+
+    startTransition(async () => {
+      const result = await (prayed === null
+        ? clearSunnahPart(dateKey, prayer, part)
+        : recordSunnah(dateKey, prayer, part, prayed)
+      ).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
+
+      if (!result.ok) {
+        setSunnahDays((current) => {
+          const next = { ...current };
+          if (previous) next[id] = previous;
+          else delete next[id];
+          return next;
+        });
+        toast({ message: result.error, tone: "danger" });
+        return;
+      }
+      toast({
+        message: `${PRAYER_LABELS[prayer]} · ${PART_LABELS[part].toLowerCase()} ${
+          prayed === null ? "cleared" : prayed ? "prayed" : "missed"
+        }`,
+        coalesceKey: "sunnah",
+      });
+      router.refresh();
+    });
+  }
+
   function save(dateKey: string, prayer: DailyPrayerKey, value: SheetSave) {
     const id = `${dateKey}:${prayer}`;
     const previous = entries[id];
-    const previousParts = partAnswers(dateKey, prayer);
 
     const optimistic: MasjidEntry | null = value.masjid
       ? {
@@ -168,7 +222,6 @@ export function MasjidHistory({
       else delete next[id];
       return next;
     });
-    applyParts(dateKey, prayer, value.parts);
 
     function rollback() {
       setEntries((current) => {
@@ -177,41 +230,24 @@ export function MasjidHistory({
         else delete next[id];
         return next;
       });
-      applyParts(dateKey, prayer, previousParts);
     }
 
     startTransition(async () => {
-      const writes: Promise<{ ok: boolean; error?: string }>[] = [];
-
-      if (value.masjid) {
-        writes.push(
-          recordMasjidPrayer({
+      const result = await (value.masjid
+        ? recordMasjidPrayer({
             prayerDate: dateKey,
             prayer,
             status: value.masjid.status,
             timing: value.masjid.timing,
             joinedRakah: value.masjid.joinedRakah,
             reason: value.masjid.reason,
-          }),
-        );
-      } else if (previous) {
-        writes.push(clearMasjidPrayer(dateKey, prayer));
-      }
+          })
+        : clearMasjidPrayer(dateKey, prayer)
+      ).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
 
-      if (trackSunnah && hasParts(prayer)) {
-        writes.push(saveSunnahParts(dateKey, prayer, value.parts));
-      }
-
-      const results = await Promise.all(
-        writes.map((write) =>
-          write.catch(() => ({ ok: false, error: "Couldn't save that." })),
-        ),
-      );
-
-      const failure = results.find((result) => !result.ok);
-      if (failure) {
+      if (!result.ok) {
         rollback();
-        toast({ message: failure.error ?? "Couldn't save that.", tone: "danger" });
+        toast({ message: result.error, tone: "danger" });
         return;
       }
 
@@ -233,9 +269,6 @@ export function MasjidHistory({
               });
             } else {
               await clearMasjidPrayer(dateKey, prayer);
-            }
-            if (trackSunnah && hasParts(prayer)) {
-              await saveSunnahParts(dateKey, prayer, previousParts);
             }
             router.refresh();
           },
@@ -1105,6 +1138,9 @@ export function MasjidHistory({
         onSave={(value) => {
           if (target) save(target.dateKey, target.prayer, value);
           setTarget(null);
+        }}
+        onPart={(part, prayed) => {
+          if (target) savePart(target.dateKey, target.prayer, part, prayed);
         }}
         onClear={() => {
           if (target) clear(target.dateKey, target.prayer);
